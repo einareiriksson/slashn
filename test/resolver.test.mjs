@@ -179,6 +179,12 @@ test('urls', () => {
   assert.equal(isOnHost('https://my2.s4hana.cloud.sap/ui', sys), false);
   assert.equal(isOnHost(undefined, sys), false);
   assert.equal(isOnHost('not a url', sys), false);
+  const onprem = { key: 'acd', host: 'acd.finteq.io:8443', scheme: 'https', launchpadPath: '/sap/bc/ui2/flp', launchpadQuery: 'sap-client=600' };
+  assert.equal(buildUrl(onprem, e, '4500001234'), 'https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#PurchaseOrder-displayFactSheet?PurchaseOrder=4500001234');
+  assert.equal(homeUrl({ ...onprem, scheme: 'http' }), 'http://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#Shell-home');
+  assert.equal(isOnHost('https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#Shell-home', onprem), true);
+  assert.equal(isOnHost('https://acd.finteq.io/ui', onprem), false);
+  assert.equal(isOnHost('https://acd.finteq.io:443/ui', { host: 'acd.finteq.io' }), true);
 });
 
 test('formatting: escaping and round-trippable content', () => {

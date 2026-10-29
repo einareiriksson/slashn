@@ -72,7 +72,7 @@ async function syncContentScripts() {
   const wanted = new Map();
   for (const sys of systems) {
     if (isDefaultHost(sys.host)) continue;
-    const origin = originPattern(sys.host);
+    const origin = originPattern(sys);
     let granted = false;
     try { granted = await chrome.permissions.contains({ origins: [origin] }); } catch { granted = false; }
     if (granted) wanted.set(sys.host, origin);
@@ -360,7 +360,7 @@ async function handleMessage(msg, sender) {
       const cache = await getCache();
       const system = systemByHost(cache.systems, msg.host);
       if (!system) return { status: 'error', error: 'unregistered host' };
-      const tabs = await chrome.tabs.query({ url: `https://${system.host}/*` });
+      const tabs = await chrome.tabs.query({ url: originPattern(system) });
       if (tabs.length) {
         try {
           await chrome.tabs.sendMessage(tabs[0].id, { type: MSG.RESCAN_TAB });

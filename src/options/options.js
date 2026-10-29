@@ -102,21 +102,21 @@ async function refreshAccess() {
   ui.access = {};
   if (!chrome.permissions?.contains) return;
   await Promise.all(snap.systems.filter((s) => !isDefaultHost(s.host)).map(async (s) => {
-    try { ui.access[s.host] = await chrome.permissions.contains({ origins: [originPattern(s.host)] }); } catch { ui.access[s.host] = false; }
+    try { ui.access[s.host] = await chrome.permissions.contains({ origins: [originPattern(s)] }); } catch { ui.access[s.host] = false; }
   }));
 }
 
 /** Must be called synchronously inside a user-gesture handler (paste, click, submit). */
-function requestAccess(host) {
-  if (isDefaultHost(host) || !chrome.permissions?.request) return Promise.resolve(true);
-  return chrome.permissions.request({ origins: [originPattern(host)] }).catch(() => false);
+function requestAccess(system) {
+  if (isDefaultHost(system.host) || !chrome.permissions?.request) return Promise.resolve(true);
+  return chrome.permissions.request({ origins: [originPattern(system)] }).catch(() => false);
 }
 
 async function addFromUrl(text) {
   const sys = systemFromUrl(text, snap.systems);
   if (!sys) { toast('That does not look like a launchpad URL'); return; }
   if (snap.systems.some((s) => s.host === sys.host)) { toast(`${sys.host} is already registered as "${snap.systems.find((s) => s.host === sys.host).key}"`); return; }
-  const access = requestAccess(sys.host); // started inside the gesture
+  const access = requestAccess(sys); // started inside the gesture
   draftSystems = null;
   await storage.setSystems([...snap.systems, sys]);
   const granted = await access;
@@ -159,8 +159,8 @@ function renderSystems() {
       <td><input data-field="key" value="${esc(s.key)}" class="cell-sm" placeholder="acd"></td>
       <td><input data-field="name" value="${esc(s.name)}" placeholder="Customer A – Dev"></td>
       <td><input data-field="customer" value="${esc(s.customer)}" placeholder="Customer A"></td>
-      <td><input data-field="host" value="${esc(s.host)}" placeholder="my123456.s4hana.cloud.sap" size="28"></td>
-      ${adv ? `<td><input data-field="launchpadPath" value="${esc(s.launchpadPath)}" class="cell-sm"></td>` : ''}
+      <td><input data-field="host" value="${esc(s.host)}" placeholder="my123456.s4hana.cloud.sap or host:8443" size="28"></td>
+      ${adv ? `<td><select data-field="scheme"><option ${s.scheme !== 'http' ? 'selected' : ''}>https</option><option ${s.scheme === 'http' ? 'selected' : ''}>http</option></select></td><td><input data-field="launchpadPath" value="${esc(s.launchpadPath)}" class="cell-sm" placeholder="/ui"></td><td><input data-field="launchpadQuery" value="${esc(s.launchpadQuery || '')}" class="cell-sm" placeholder="sap-client=600"></td>` : ''}
       <td><select data-field="env">${ENVS.map((e) => `<option ${e === s.env ? 'selected' : ''}>${e}</option>`).join('')}</select></td>
       <td><input type="radio" name="isDefault" data-field="isDefault" ${s.isDefault ? 'checked' : ''}></td>
       <td class="muted">${meta?.lastScanned ? esc(new Date(meta.lastScanned).toLocaleString()) : '–'}${status}${!isDefaultHost(s.host) && s.host && ui.access[s.host] === false ? ` <button class="small" data-action="grant-access" data-host="${esc(s.host)}" title="Needed for discovery and tab reuse on custom hosts">Grant site access</button>` : ''}</td>
@@ -171,7 +171,7 @@ function renderSystems() {
         <button class="small danger" data-action="delete-system" data-row="${i}">Delete</button>
       </td></tr>`;
   }).join('');
-  $('#systems-table').innerHTML = `<thead><tr><th>Key</th><th>Name</th><th>Customer</th><th>Host</th>${adv ? '<th>Path</th>' : ''}<th>Env</th><th>Default</th><th>Last scanned</th><th>Apps</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="10" class="muted">No systems yet. Click "Add system".</td></tr>'}</tbody>`;
+  $('#systems-table').innerHTML = `<thead><tr><th>Key</th><th>Name</th><th>Customer</th><th>Host</th>${adv ? '<th>Scheme</th><th>Path</th><th>Query</th>' : ''}<th>Env</th><th>Default</th><th>Last scanned</th><th>Apps</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="10" class="muted">No systems yet. Click "Add system".</td></tr>'}</tbody>`;
   const warnings = keyCollisionWarnings(snap.systems);
   $('#sys-warnings').hidden = !warnings.length;
   $('#sys-warnings').textContent = warnings.join('\n');
@@ -272,7 +272,9 @@ function readSystemsFromDom() {
       name: get('name').value,
       customer: get('customer').value,
       host: get('host').value,
+      scheme: get('scheme')?.value || 'https',
       launchpadPath: get('launchpadPath')?.value || '/ui',
+      launchpadQuery: get('launchpadQuery')?.value || '',
       env: get('env').value,
       isDefault: get('isDefault').checked,
     });
@@ -369,7 +371,7 @@ document.addEventListener('click', async (ev) => {
         break;
       }
       case 'grant-access': {
-        const granted = await requestAccess(btn.dataset.host);
+        const granted = await requestAccess(snap.systems.find((s) => s.host === btn.dataset.host) || { host: btn.dataset.host });
         ui.access[btn.dataset.host] = granted;
         renderSystems();
         toast(granted ? `Access granted for ${btn.dataset.host}` : 'Access not granted');

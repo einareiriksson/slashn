@@ -21,11 +21,11 @@
       <form id="add-url" class="toolbar">
         <input type="text" name="url" id="add-url-input" placeholder="Paste a launchpad URL to add a system, e.g. https://my123456.s4hana.cloud.sap" size="64" autocomplete="off">
         <button type="submit">Add from URL</button>
-        <span class="hint">Pasting adds immediately. Hosts outside *.s4hana.cloud.sap ask for site access once.</span>
+        <span class="hint">Pasting adds immediately. Works for on-premise and private cloud too (port, path and sap-client are kept). Hosts outside *.s4hana.cloud.sap ask for site access once.</span>
       </form>
       <div class="toolbar">
         <button data-action="add-system">Add system manually</button>
-        <label class="inline"><input type="checkbox" data-action="toggle-advanced"> Show launchpad path</label>
+        <label class="inline"><input type="checkbox" data-action="toggle-advanced"> Show scheme, path and query (on-premise)</label>
         <span class="spacer"></span>
         <button data-action="export-json">Export config (JSON)</button>
         <label class="inline"><input type="checkbox" id="include-discovered"> include discovered apps</label>
@@ -35,7 +35,7 @@
       <div id="sys-errors" class="errors" hidden></div>
       <div id="sys-warnings" class="warnings" hidden></div>
       <div class="table-wrap"><table id="systems-table" class="grid"></table></div>
-      <p class="hint">Keys are what you type in the omnibox (lowercase). Exactly one system is the default; otherwise the most recently used one is picked. Host has no scheme or path, e.g. <code>my123456.s4hana.cloud.sap</code>.</p>
+      <p class="hint">Keys are what you type in the omnibox (lowercase). Exactly one system is the default; otherwise the most recently used one is picked. Host has no scheme or path, e.g. <code>my123456.s4hana.cloud.sap</code> or <code>erp.example.com:8443</code>; on-premise path and <code>sap-client</code> live under the advanced columns.</p>
 
       <h2>Settings</h2>
       <form id="settings" class="row-form settings">

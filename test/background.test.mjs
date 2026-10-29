@@ -194,21 +194,25 @@ test('popup messages: resolve, navigate, open url', async () => {
 
 test('custom hosts get dynamic content scripts once access is granted', async () => {
   const systems = (await sync.get('systems')).systems;
-  await sync.set({ systems: [...systems, { key: 'fin', name: 'Finteq', customer: 'finteq', host: 'acd.finteq.io', launchpadPath: '/ui', env: 'TST', isDefault: false }] });
+  await sync.set({ systems: [...systems, { key: 'fin', name: 'Finteq', customer: 'finteq', host: 'acd.finteq.io:8443', launchpadPath: '/sap/bc/ui2/flp', launchpadQuery: 'sap-client=600', env: 'TST', isDefault: false }] });
   L.storageChanged({ systems: {} }, 'sync');
   await tick();
   assert.deepEqual(chrome.scripting.registered, []); // no permission yet
-  chrome.permissions.granted.add('https://acd.finteq.io/*');
+  chrome.permissions.granted.add('https://acd.finteq.io:8443/*');
   L.permAdded();
   await tick();
   assert.deepEqual(chrome.scripting.registered.map((s) => [s.id, s.world || 'ISOLATED', s.matches[0]]), [
-    ['sapqs-main-acd.finteq.io', 'MAIN', 'https://acd.finteq.io/*'],
-    ['sapqs-iso-acd.finteq.io', 'ISOLATED', 'https://acd.finteq.io/*'],
+    ['sapqs-main-acd.finteq.io:8443', 'MAIN', 'https://acd.finteq.io:8443/*'],
+    ['sapqs-iso-acd.finteq.io:8443', 'ISOLATED', 'https://acd.finteq.io:8443/*'],
   ]);
+  calls.length = 0;
+  L.onInputEntered('fin me21n', 'currentTab');
+  await tick(80);
+  assert.deepEqual(calls[0], ['create', { url: 'https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#PurchaseOrder-create', active: true }]);
   L.permAdded();
   await tick();
   assert.equal(chrome.scripting.registered.length, 2); // idempotent
-  const r = await send({ type: MSG.PAGE_READY, host: 'acd.finteq.io' });
+  const r = await send({ type: MSG.PAGE_READY, host: 'acd.finteq.io:8443' });
   assert.equal(r.scan, true);
   await sync.set({ systems });
   L.storageChanged({ systems: {} }, 'sync');

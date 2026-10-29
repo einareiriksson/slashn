@@ -29,13 +29,14 @@ export const KEYS = Object.freeze({
 
 export const DEFAULT_SETTINGS = Object.freeze({ suggestionLimit: 6, autoScanDays: 7, reuseTabOnSameHost: true });
 export const ENVS = Object.freeze(['DEV', 'TST', 'PRD']);
-export const HOST_RE = /^[a-z0-9.-]+$/;
+export const HOST_RE = /^[a-z0-9.-]+(:\d{1,5})?$/;
 export const KEY_RE = /^[a-z0-9][a-z0-9_-]*$/;
 export const ALIAS_RE = /^[a-z0-9][a-z0-9_./-]*$/;
 export const DEFAULT_HOST_SUFFIX = '.s4hana.cloud.sap';
 /** Hosts covered by the static manifest permissions; anything else needs a runtime grant + dynamic content scripts. */
-export const isDefaultHost = (host) => String(host || '').toLowerCase().endsWith(DEFAULT_HOST_SUFFIX);
-export const originPattern = (host) => `https://${String(host).toLowerCase()}/*`;
+export const isDefaultHost = (host) => String(host || '').toLowerCase().replace(/:\d+$/, '').endsWith(DEFAULT_HOST_SUFFIX);
+/** Match pattern for a system's origin; Chrome accepts an explicit port and treats a port-less pattern as any port. */
+export const originPattern = (hostOrSystem) => { const sys = typeof hostOrSystem === 'string' ? { host: hostOrSystem } : hostOrSystem; return `${sys.scheme === 'http' ? 'http' : 'https'}://${String(sys.host).toLowerCase()}/*`; };
 
 /** parseLaunchpadUrl("https://acd.finteq.io/ui#Shell-home") → { host:'acd.finteq.io', launchpadPath:'/ui' } | null */
 export function parseLaunchpadUrl(input) {
@@ -45,11 +46,14 @@ export function parseLaunchpadUrl(input) {
   let u;
   try { u = new URL(text); } catch { return null; }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
-  const host = u.hostname.toLowerCase();
-  if (!HOST_RE.test(host) || !host.includes('.')) return null;
+  const host = u.host.toLowerCase(); // includes an explicit non-default port
+  if (!HOST_RE.test(host) || !u.hostname.includes('.')) return null;
   let path = u.pathname.replace(/\/+$/, '');
   if (!path || path === '/') path = DEFAULT_LAUNCHPAD_PATH;
-  return { host, launchpadPath: path };
+  // keep launchpad query parameters such as sap-client=600; drop empty ones
+  const params = [...new URLSearchParams(u.search)].filter(([k]) => k);
+  const launchpadQuery = new URLSearchParams(params).toString();
+  return { scheme: u.protocol === 'http:' ? 'http' : 'https', host, launchpadPath: path, launchpadQuery };
 }
 
 function guessEnv(host) {
@@ -64,14 +68,14 @@ function guessEnv(host) {
 export function systemFromUrl(input, existing = []) {
   const parsed = parseLaunchpadUrl(input);
   if (!parsed) return null;
-  const { host, launchpadPath } = parsed;
-  const labels = host.split('.');
+  const { scheme, host, launchpadPath, launchpadQuery } = parsed;
+  const labels = host.replace(/:\d+$/, '').split('.');
   const base = (labels[0] || 'sys').toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[^a-z0-9]+/, '') || 'sys';
   const keys = new Set((existing || []).map((s) => String(s.key).toLowerCase()));
   let key = base;
   for (let n = 2; keys.has(key); n++) key = `${base}${n}`;
   const customer = isDefaultHost(host) ? '' : (labels.length >= 3 ? labels[labels.length - 2] : '');
-  return normalizeSystem({ key, name: host, customer, host, launchpadPath, env: guessEnv(host), isDefault: !(existing || []).some((s) => s.isDefault) });
+  return normalizeSystem({ key, name: host, customer, host, scheme, launchpadPath, launchpadQuery, env: guessEnv(host), isDefault: !(existing || []).some((s) => s.isDefault) });
 }
 
 // ---------------------------------------------------------------- pure helpers
@@ -130,8 +134,10 @@ export function normalizeSystem(raw) {
     key: String(r.key ?? '').trim().toLowerCase(),
     name: String(r.name ?? '').trim(),
     customer: String(r.customer ?? '').trim(),
-    host: String(r.host ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
+    host: String(r.host ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[/?#].*$/, ''),
+    scheme: String(r.scheme || '').toLowerCase() === 'http' ? 'http' : 'https',
     launchpadPath: String(r.launchpadPath || DEFAULT_LAUNCHPAD_PATH).trim() || DEFAULT_LAUNCHPAD_PATH,
+    launchpadQuery: String(r.launchpadQuery ?? '').trim().replace(/^\?/, ''),
     env: ENVS.includes(env) ? env : 'TST',
     isDefault: Boolean(r.isDefault),
   };

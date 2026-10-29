@@ -45,6 +45,10 @@ Scans run when the launchpad loads on a registered host and the last scan is mis
 
 Click the toolbar icon for the same launcher as a small panel: it shows the tenant of the active tab (if registered), an input that behaves like the omnibox (type, arrow keys, Enter; Ctrl/Cmd+Enter for a new tab), and the last ten launches.
 
+## On-premise and private cloud systems
+
+Paste the full launchpad URL, for example `https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#Shell-home`. The port, the launchpad path and the query (`sap-client`, `sap-language`) are stored on the system and reused on every generated URL, so `s acd me21n` opens `https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#PurchaseOrder-create`. `http://` hosts are accepted for internal systems. Discovery uses the same shell services; on UI5 releases older than 1.120 it falls back to `CrossApplicationNavigation` automatically. The t-code table and the app library are Public Cloud oriented, so on-premise users will rely more on discovery and their own aliases.
+
 ## Options page
 
 - **Systems**: settings (suggestion limit, auto-rescan interval, tab reuse), inline table (key, name, customer, host, env, default, optional launchpad path), per-row Open launchpad / Rescan now / Delete, last scan and app count, a warning when a system key collides with an alias, recent launches with **Pin as alias** for guesses and unresolved inputs. Export/import the whole config as JSON.
@@ -76,4 +80,3 @@ No build step; plain ES modules. `src/resolver.js`, `src/csv.js`, `src/tcodes.js
 - Seed intents with confidence `low` are educated guesses. Scan a tenant to verify them; the options page marks guesses.
 - One Chrome profile per customer is recommended when IAS tenants collide; each profile keeps its own systems list.
 - A deep link opened while your IAS session has expired may lose its hash after login; re-run the command.
-- On-premise S/4HANA is not supported yet; the `launchpadPath` field exists so it can be added without a migration.

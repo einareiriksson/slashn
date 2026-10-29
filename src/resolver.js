@@ -276,9 +276,12 @@ function cmpNullable(a, b) {
 
 // ---------------------------------------------------------------- urls
 
+/** "https://host[:port]/path?query" – host may carry a port; launchpadQuery (e.g. "sap-client=600") is kept on every URL. */
 export function launchpadBase(system) {
   const path = str(system?.launchpadPath) || DEFAULT_LAUNCHPAD_PATH;
-  return `https://${lc(system?.host)}${path.startsWith('/') ? path : '/' + path}`;
+  const scheme = lc(system?.scheme) === 'http' ? 'http' : 'https';
+  const query = str(system?.launchpadQuery).replace(/^\?/, '');
+  return `${scheme}://${lc(system?.host)}${path.startsWith('/') ? path : '/' + path}${query ? '?' + query : ''}`;
 }
 
 export function intentUrl(system, intent, params = null) {
@@ -296,10 +299,11 @@ export function buildUrl(system, entry, param = null) {
 export const homeUrl = (system) => intentUrl(system, HOME_INTENT);
 export const appFinderUrl = (system) => intentUrl(system, APP_FINDER_INTENT);
 
+/** Compares host including an explicit port ("acd.finteq.io:8443"); default ports are normalised by URL(). */
 export function isOnHost(url, system) {
   if (!url || !system?.host) return false;
   try {
-    return new URL(url).hostname.toLowerCase() === lc(system.host);
+    return new URL(url).host.toLowerCase() === lc(system.host);
   } catch {
     return false;
   }
