@@ -271,7 +271,7 @@ export function createStorage(areas = null) {
     async exportJson({ includeDiscovered = false } = {}) {
       const snap = await api.loadSnapshot();
       const out = {
-        format: 'sap-quickstart-config',
+        format: 'slashn-config',
         schemaVersion: SCHEMA_VERSION,
         exportedAt: new Date().toISOString(),
         systems: snap.systems,
@@ -285,7 +285,7 @@ export function createStorage(areas = null) {
     },
 
     async importJson(obj, { replace = true } = {}) {
-      if (!obj || obj.format !== 'sap-quickstart-config') throw new Error('Not a SAP QuickStart config export');
+      if (!obj || obj.format !== 'slashn-config') throw new Error('Not a slashn config export');
       const migrated = migrateSnapshot({
         sync: { [KEYS.SYSTEMS]: obj.systems || [], [KEYS.USER_ALIASES]: obj.userAliases || [], [KEYS.HIDDEN]: obj.hiddenAliases || [], [KEYS.SETTINGS]: obj.settings || {} },
         local: { [KEYS.DISCOVERED]: obj.discovered, [KEYS.SCAN_META]: obj.scanMeta, [KEYS.RECENT]: [] },

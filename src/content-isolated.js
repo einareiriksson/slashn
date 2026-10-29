@@ -1,4 +1,4 @@
-// SAP QuickStart — isolated-world content script: bridge between the page (MAIN world) and the service worker.
+// slashn — isolated-world content script: bridge between the page (MAIN world) and the service worker.
 (() => {
   'use strict';
   const NS = 'SAPQS';

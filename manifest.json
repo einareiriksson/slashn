@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "SAP QuickStart",
+  "name": "slashn",
   "version": "0.1.0",
-  "description": "Type `s <system> <alias>` in the address bar to jump straight to a Fiori app on an S/4HANA Cloud tenant.",
+  "description": "slashn: type `s <system> <alias>` in the address bar to jump straight to a Fiori app on an S/4HANA Cloud tenant.",
   "minimum_chrome_version": "120",
   "icons": {
     "16": "icons/icon16.png",
@@ -52,7 +52,7 @@
   ],
   "action": {
     "default_popup": "src/popup/popup.html",
-    "default_title": "SAP QuickStart",
+    "default_title": "slashn",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"

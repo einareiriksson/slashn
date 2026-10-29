@@ -1,4 +1,4 @@
-// SAP QuickStart — MV3 service worker.
+// slashn — MV3 service worker.
 // Omnibox handling, alias resolution, navigation, seed loading, discovery bookkeeping, rescan orchestration.
 import { MSG, LOG_PREFIX } from './messages.js';
 import { createStorage } from './storage.js';

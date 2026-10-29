@@ -1,4 +1,4 @@
-// SAP QuickStart — toolbar popup. Same launcher as the omnibox, driven through the service worker.
+// slashn — toolbar popup. Same launcher as the omnibox, driven through the service worker.
 import { MSG } from '../messages.js';
 
 const $ = (sel) => document.querySelector(sel);

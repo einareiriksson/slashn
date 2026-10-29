@@ -1,4 +1,4 @@
-# SAP QuickStart
+# slashn (SAP app launcher)
 
 Chrome/Edge extension (Manifest V3) that turns the address bar into a transaction-code launcher for SAP S/4HANA Cloud Public Edition. Type `s`, a space, then an alias and you land directly in the Fiori app on the right tenant.
 

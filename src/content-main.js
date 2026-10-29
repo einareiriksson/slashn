@@ -1,4 +1,4 @@
-// SAP QuickStart — MAIN-world content script. Runs inside the launchpad page.
+// slashn — MAIN-world content script. Runs inside the launchpad page.
 // No chrome.* here (unavailable in the MAIN world). Talks to the isolated script via window.postMessage.
 // Discovery only runs when asked (SAPQS_RESCAN); the service worker owns the "when" decision.
 (() => {

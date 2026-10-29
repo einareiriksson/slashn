@@ -1,4 +1,4 @@
-// SAP QuickStart — resolver. Pure module: no imports, no chrome.* access.
+// slashn — resolver. Pure module: no imports, no chrome.* access.
 // Parses omnibox input, merges alias tiers, ranks candidates, builds URLs and
 // formats omnibox suggestions. Everything here is covered by test/resolver.test.mjs.
 
@@ -343,7 +343,7 @@ export function formatSystemSuggestion(system) {
 
 export function formatDefaultDescription(parsed, topMatch = null) {
   const sys = parsed?.system;
-  if (!sys) return 'No systems configured – press Enter to open SAP QuickStart options';
+  if (!sys) return 'No systems configured – press Enter to open slashn options';
   const where = `<dim>[${escapeXml(sys.key)} · ${escapeXml(sys.host)}]</dim>`;
   switch (parsed.kind) {
     case 'systems':

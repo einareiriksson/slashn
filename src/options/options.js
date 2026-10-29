@@ -1,4 +1,4 @@
-// SAP QuickStart — options page.
+// slashn — options page.
 import { createStorage, validateSystems, normalizeSystem, ENVS, ALIAS_RE } from '../storage.js';
 import { mergeEntries, normalizeEntry, homeUrl, splitIntent, entryKey } from '../resolver.js';
 import { aliasesFromCsv, aliasesToCsv } from '../csv.js';
@@ -364,7 +364,7 @@ document.addEventListener('click', async (ev) => {
       }
       case 'export-json': {
         const data = await storage.exportJson({ includeDiscovered: $('#include-discovered').checked });
-        download(`sap-quickstart-config-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2), 'application/json');
+        download(`slashn-config-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2), 'application/json');
         break;
       }
       case 'import-json': {
@@ -393,7 +393,7 @@ document.addEventListener('click', async (ev) => {
         break;
       }
       case 'export-csv': {
-        download('sap-quickstart-aliases.csv', aliasesToCsv(staticEntries()), 'text/csv');
+        download('slashn-aliases.csv', aliasesToCsv(staticEntries()), 'text/csv');
         break;
       }
       case 'delete-alias': {
