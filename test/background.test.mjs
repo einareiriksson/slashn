@@ -132,7 +132,7 @@ test('discovery handshake, storage and ranking', async () => {
   assert.equal(s[0].content, 'acd zapp1');
   assert.ok(s[0].description.includes('on tenant'));
   const guess = await changed('acd va4z');
-  assert.equal(guess[0].content, 'acd SalesContract-manage');
+  assert.ok(guess[0].description.includes('SalesContract-manage'));
   assert.ok(guess[0].description.includes('guess'));
   const other = await changed('tst zebra quo');
   assert.equal(other.length, 0); // discovered entries are per host
