@@ -126,7 +126,7 @@ function union(...lists) {
 export function mergeEntries({ user = [], seed = [], hidden = [], discovered = [] } = {}) {
   const hiddenSet = new Set(hidden.map(lc));
   const discoveredIntents = new Set(discovered.map((d) => lc(normalizeEntry(d).intent)).filter(Boolean));
-  const userEntries = user.map((e) => normalizeEntry({ ...e, source: 'user' }));
+  const userEntries = user.map((e) => normalizeEntry({ ...e, source: 'user', discoveredOnTarget: false }));
   const staticEntries = seed
     .map((e) => normalizeEntry(e))
     .filter((e) => e.intent && !(e.alias && hiddenSet.has(e.alias)))

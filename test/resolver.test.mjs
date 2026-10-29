@@ -140,6 +140,7 @@ test('mergeEntries: precedence, hidden, auto-alias, inheritance', () => {
   const byAlias = (a) => m.find((e) => e.alias === a);
   assert.equal(byAlias('po').source, 'user');
   assert.equal(byAlias('po').intent, 'PurchaseOrder-displayFactSheet');
+  assert.equal(mergeEntries({ user: [{ alias: 'x', intent: 'A-b', title: 'x', discoveredOnTarget: true }] })[0].discoveredOnTarget, false); // pinned rows get no tenant bonus
   assert.equal(byAlias('me21n'), undefined); // hidden
   const disc = m.find((e) => e.source === 'discovered' && e.intent === 'PurchaseOrder-manage');
   assert.equal(disc.appId, 'F0842'); // inherited
