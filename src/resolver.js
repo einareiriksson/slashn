@@ -33,6 +33,8 @@ export const DEFAULT_LAUNCHPAD_PATH = '/ui';
 export const HOME_INTENT = 'Shell-home';
 export const APP_FINDER_INTENT = 'Shell-appfinder';
 export const MIN_PREFIX_LENGTH = 2;
+/** First tokens that list systems / open options instead of resolving an alias ("?" is special in Chrome's omnibox). */
+export const SYSTEMS_WORDS = Object.freeze(['?', 'list', 'systems', 'options', 'settings', 'setup', 'config']);
 
 const str = (v) => (v == null ? '' : String(v).trim());
 const lc = (v) => str(v).toLowerCase();
@@ -65,7 +67,7 @@ export function parseInput(text, systems, { lastUsedKey } = {}) {
   const base = { raw, tokens, system: null, systemExplicit: false, head: null, rest: [], query: '' };
   const fallback = pickDefaultSystem(systems, lastUsedKey);
   if (tokens.length === 0) return { ...base, kind: 'empty', system: fallback };
-  if (tokens[0] === '?') return { ...base, kind: 'systems', system: fallback };
+  if (SYSTEMS_WORDS.includes(tokens[0])) return { ...base, kind: 'systems', system: fallback };
   let system = findSystem(systems, tokens[0]);
   let systemExplicit = false;
   let rest = tokens;
@@ -343,11 +345,11 @@ export function formatSystemSuggestion(system) {
 
 export function formatDefaultDescription(parsed, topMatch = null) {
   const sys = parsed?.system;
-  if (!sys) return 'No systems configured – press Enter to open slashn options';
+  if (!sys) return 'No systems configured – type anything and press Enter to open slashn options';
   const where = `<dim>[${escapeXml(sys.key)} · ${escapeXml(sys.host)}]</dim>`;
   switch (parsed.kind) {
     case 'systems':
-      return 'Select a system below, or press Enter to open options';
+      return 'Select a system below, or press Enter to open slashn options';
     case 'empty':
     case 'home':
       return `Open launchpad home ${where}`;

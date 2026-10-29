@@ -13,7 +13,7 @@ s [<system-key>] <alias> [<value>]
 | `s acd` | launchpad home on `acd` |
 | `s acd manage purchase` | title search; up to six suggestions |
 | `s va41` | guessed from the t-code prefix, offered only if the tenant has `SalesContract-*` |
-| `s ?` | lists your systems |
+| `s ?` or `s list` | lists your systems; Enter opens the options page (Chrome may treat a leading `?` as a search, so prefer `list`) |
 
 A parameter only follows a keyed match (alias, t-code, app ID, intent or guess); multi-word title searches cannot carry one.
 

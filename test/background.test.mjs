@@ -172,4 +172,10 @@ test('popup messages: resolve, navigate, open url', async () => {
   assert.equal(open.action, 'open');
   assert.deepEqual(calls[0], ['update', 1, { url: 'https://my1.s4hana.cloud.sap/ui#Shell-home' }]);
   assert.deepEqual(await send({ type: MSG.OPEN_URL, url: 'javascript:alert(1)', host: 'x' }, { id: 'ext' }), { error: 'bad url' });
+  calls.length = 0;
+  assert.equal((await send({ type: MSG.NAVIGATE, text: '', disposition: 'currentTab' }, { id: 'ext' })).action, 'home'); // popup: empty Enter
+  assert.deepEqual(calls[0], ['update', 1, { url: 'https://my1.s4hana.cloud.sap/ui#Shell-home' }]);
+  calls.length = 0;
+  assert.equal((await send({ type: MSG.NAVIGATE, text: 'list', disposition: 'currentTab' }, { id: 'ext' })).action, 'options');
+  assert.deepEqual(calls[0], ['options']);
 });

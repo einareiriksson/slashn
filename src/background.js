@@ -25,7 +25,11 @@ chrome.runtime.onStartup?.addListener(() => {
   ensureSeed({ force: false }).catch((e) => warn('seed check failed', e));
 });
 chrome.omnibox.onInputStarted.addListener(() => {
-  getCache().catch((e) => warn('cache warm-up failed', e));
+  getCache().then((cache) => {
+    // Show help before the first keystroke: launchpad target, or "no systems" guidance.
+    const parsed = parseInput('', cache.systems, { lastUsedKey: cache.lastUsedKey });
+    setDefault(parsed.system ? `${formatDefaultDescription(parsed)} – type an alias, or "list" for systems` : formatDefaultDescription(parsed));
+  }).catch((e) => warn('cache warm-up failed', e));
 });
 chrome.omnibox.onInputChanged.addListener((text, suggest) => {
   onInputChanged(text, suggest).catch((e) => warn('onInputChanged failed', e));

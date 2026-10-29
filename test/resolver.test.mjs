@@ -25,6 +25,9 @@ const idx = (entries) => buildIndex(mergeEntries({ seed: entries }));
 test('parseInput: empty, systems, home, query', () => {
   assert.equal(parseInput('', systems).kind, 'empty');
   assert.equal(parseInput('?', systems).kind, 'systems');
+  assert.equal(parseInput('list', systems).kind, 'systems');
+  assert.equal(parseInput('OPTIONS', systems).kind, 'systems');
+  assert.equal(parseInput('acd list', systems).kind, 'query'); // reserved words only in first position
   const home = parseInput('acd', systems);
   assert.equal(home.kind, 'home');
   assert.equal(home.system.key, 'acd');

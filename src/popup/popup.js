@@ -81,8 +81,8 @@ function onKey(ev) {
 }
 
 async function go(text, disposition) {
-  if (!String(text).trim()) return;
-  const r = await send({ type: MSG.NAVIGATE, text, disposition });
+  // Empty input is meaningful: launchpad home on the default system, or the options page when nothing is configured.
+  const r = await send({ type: MSG.NAVIGATE, text: String(text ?? ''), disposition });
   if (r?.error) { $('#hint').textContent = r.error; return; }
   window.close();
 }
