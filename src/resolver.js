@@ -27,7 +27,7 @@ export const TIER = Object.freeze({
 const EXACT_KEYED = new Set([MATCH.ALIAS, MATCH.TCODE, MATCH.APP_ID, MATCH.INTENT]);
 const KEYED = new Set([...EXACT_KEYED, MATCH.TCODE_GUESS, MATCH.KEY_PREFIX]);
 
-export const SOURCE_RANK = Object.freeze({ user: 4, discovered: 3, seed: 2, library: 1 });
+export const SOURCE_RANK = Object.freeze({ user: 4, discovered: 3, import: 2.5, seed: 2, library: 1 });
 
 export const DEFAULT_LAUNCHPAD_PATH = '/ui';
 export const HOME_INTENT = 'Shell-home';

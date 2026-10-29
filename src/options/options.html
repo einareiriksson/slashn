@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAP QuickStart options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header class="top">
+    <h1>SAP QuickStart</h1>
+    <p class="hint">Omnibox: type <code>s</code>, space, then <code>[system] &lt;alias&gt; [value]</code>. <code>s ?</code> lists systems.</p>
+    <nav class="tabs" role="tablist">
+      <button class="tab" data-tab="systems" role="tab">Systems</button>
+      <button class="tab" data-tab="aliases" role="tab">Aliases</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="tab-systems" class="panel" hidden>
+      <div class="toolbar">
+        <button data-action="add-system">Add system</button>
+        <label class="inline"><input type="checkbox" data-action="toggle-advanced"> Show launchpad path</label>
+        <span class="spacer"></span>
+        <button data-action="export-json">Export config (JSON)</button>
+        <label class="inline"><input type="checkbox" id="include-discovered"> include discovered apps</label>
+        <button data-action="import-json">Import config (JSON)</button>
+        <input type="file" id="file-json" accept="application/json,.json" hidden>
+      </div>
+      <div id="sys-errors" class="errors" hidden></div>
+      <div class="table-wrap"><table id="systems-table" class="grid"></table></div>
+      <p class="hint">Keys are what you type in the omnibox (lowercase). Exactly one system is the default; otherwise the most recently used one is picked. Host has no scheme or path, e.g. <code>my123456.s4hana.cloud.sap</code>.</p>
+
+      <h2>Recent launches</h2>
+      <div class="table-wrap"><table id="recent-table" class="grid"></table></div>
+    </section>
+
+    <section id="tab-aliases" class="panel" hidden>
+      <nav class="subtabs">
+        <button class="subtab" data-sub="aliases">Static aliases</button>
+        <button class="subtab" data-sub="tcodes">Transaction codes</button>
+        <button class="subtab" data-sub="discovered">Discovered per system</button>
+      </nav>
+
+      <div id="sub-aliases" class="subpanel" hidden>
+        <div class="toolbar">
+          <input type="search" id="alias-filter" placeholder="Filter alias, intent, title, t-code…">
+          <select id="alias-source"><option value="">all sources</option><option value="user">mine</option><option value="import">imported</option><option value="seed">seed</option><option value="library">library</option></select>
+          <span class="spacer"></span>
+          <button data-action="import-csv">Import CSV</button>
+          <select id="import-target" title="Where imported rows go"><option value="import">into local import table (this device)</option><option value="user">into my aliases (synced, small)</option></select>
+          <select id="import-mode"><option value="merge">merge</option><option value="replace">replace</option></select>
+          <input type="file" id="file-csv" accept=".csv,text/csv" hidden>
+          <button data-action="export-csv">Export CSV</button>
+        </div>
+        <form id="alias-add" class="row-form">
+          <input name="alias" placeholder="alias" required pattern="[a-z0-9][a-z0-9_./-]*">
+          <input name="intent" placeholder="SemanticObject-action" required pattern="[A-Za-z0-9_]+-[A-Za-z0-9_]+">
+          <input name="title" placeholder="title">
+          <input name="appId" placeholder="app ID" size="8">
+          <input name="tcodes" placeholder="t-codes; separated" size="14">
+          <input name="paramKey" placeholder="param key" size="12">
+          <button type="submit">Add alias</button>
+        </form>
+        <div id="alias-errors" class="errors" hidden></div>
+        <div id="hidden-list" class="hint"></div>
+        <div class="table-wrap"><table id="aliases-table" class="grid"></table></div>
+        <p class="hint">Editing a seed or library row creates a personal copy that shadows it; deleting one hides it. Personal rows and hidden markers sync across your Chrome profile. Seed and library rows are refreshed on every extension update.</p>
+      </div>
+
+      <div id="sub-tcodes" class="subpanel" hidden>
+        <div class="toolbar">
+          <input type="search" id="tcode-filter" placeholder="Filter t-code or intent…">
+        </div>
+        <form id="tcode-add" class="row-form">
+          <input name="tcode" placeholder="t-code (e.g. VA41)" required>
+          <input name="target" placeholder="alias or SemanticObject-action" required>
+          <button type="submit">Map t-code</button>
+        </form>
+        <div id="tcode-errors" class="errors" hidden></div>
+        <div class="table-wrap"><table id="tcodes-table" class="grid"></table></div>
+        <p class="hint">Unknown t-codes are also guessed from their prefix (ME2x → PurchaseOrder, VA4x → SalesContract…) and offered as <em>guess</em> when the target tenant actually has that intent. Low-confidence seed mappings disappear once a scan shows the tenant lacks the intent.</p>
+      </div>
+
+      <div id="sub-discovered" class="subpanel" hidden>
+        <div class="toolbar">
+          <select id="disc-host"></select>
+          <input type="search" id="disc-filter" placeholder="Filter intent, title, app ID…">
+          <span class="spacer"></span>
+          <button data-action="rescan-selected">Rescan now</button>
+          <button data-action="clear-selected" class="danger">Clear</button>
+        </div>
+        <div id="disc-meta" class="hint"></div>
+        <div class="table-wrap"><table id="disc-table" class="grid"></table></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

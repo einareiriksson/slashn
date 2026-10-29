@@ -18,6 +18,7 @@ export const KEYS = Object.freeze({
   // local
   SEED: 'seedAliases',
   SEED_VERSION: 'seedVersion',
+  IMPORTED: 'importedAliases',
   DISCOVERED: 'discovered',
   SCAN_META: 'scanMeta',
   RECENT: 'recent',
@@ -137,9 +138,10 @@ export function migrateSnapshot(snapshot) {
 /** Build the seed alias list from the bundled CSV texts. */
 export function buildSeedEntries({ aliasesCsv = '', libraryCsv = '', tcodesCsv = '' } = {}) {
   const errors = [];
-  const a = aliasesFromCsv(aliasesCsv, { source: 'seed' });
-  const l = aliasesFromCsv(libraryCsv, { source: 'library' });
-  const t = tcodesFromCsv(tcodesCsv);
+  const empty = { entries: [], rows: [], errors: [] };
+  const a = aliasesCsv.trim() ? aliasesFromCsv(aliasesCsv, { source: 'seed' }) : empty;
+  const l = libraryCsv.trim() ? aliasesFromCsv(libraryCsv, { source: 'library' }) : empty;
+  const t = tcodesCsv.trim() ? tcodesFromCsv(tcodesCsv) : empty;
   errors.push(...a.errors.map((e) => ({ file: 'aliases.csv', ...e })), ...l.errors.map((e) => ({ file: 'library.csv', ...e })), ...t.errors.map((e) => ({ file: 'tcodes.csv', ...e })));
   const entries = applyTcodeTable([...a.entries, ...l.entries].map(normalizeEntry), t.rows).map(normalizeEntry);
   return { entries, errors };
@@ -196,6 +198,8 @@ export function createStorage(areas = null) {
     async getSeedAliases() { return one(local, KEYS.SEED, []); },
     async setSeedAliases(list, version) { await local.set({ [KEYS.SEED]: list || [], [KEYS.SEED_VERSION]: version ?? null }); },
     async getSeedVersion() { return one(local, KEYS.SEED_VERSION, null); },
+    async getImportedAliases() { return (await one(local, KEYS.IMPORTED, [])).map((a) => normalizeEntry({ ...a, source: 'import' })); },
+    async setImportedAliases(list) { await local.set({ [KEYS.IMPORTED]: (list || []).map((a) => normalizeEntry({ ...a, source: 'import' })) }); },
 
     // discovery
     async getDiscovered(host) { const all = await one(local, KEYS.DISCOVERED, {}); return host ? all[host] ?? null : all; },
@@ -233,10 +237,10 @@ export function createStorage(areas = null) {
 
     /** One read of everything the resolver needs. */
     async loadSnapshot() {
-      const [systems, userAliases, hiddenAliases, seedAliases, discovered, scanMeta, lastUsedKey, settings] = await Promise.all([
-        api.getSystems(), api.getUserAliases(), api.getHiddenAliases(), api.getSeedAliases(), api.getDiscovered(), api.getScanMeta(), api.getLastUsedSystemKey(), api.getSettings(),
+      const [systems, userAliases, hiddenAliases, seedAliases, importedAliases, discovered, scanMeta, lastUsedKey, settings, recent] = await Promise.all([
+        api.getSystems(), api.getUserAliases(), api.getHiddenAliases(), api.getSeedAliases(), api.getImportedAliases(), api.getDiscovered(), api.getScanMeta(), api.getLastUsedSystemKey(), api.getSettings(), api.getRecent(),
       ]);
-      return { systems, userAliases, hiddenAliases, seedAliases, discovered, scanMeta, lastUsedKey, settings };
+      return { systems, userAliases, hiddenAliases, seedAliases, importedAliases, discovered, scanMeta, lastUsedKey, settings, recent };
     },
 
     async migrate() {

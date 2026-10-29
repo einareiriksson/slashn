@@ -1,0 +1,126 @@
+# Legacy transaction code → Fiori intent mapping (best guess, curated by hand).
+# Columns: tcode,semanticObject,action,appId,paramKey,confidence,note
+# tcode may list several codes separated by ';'. confidence: high = verified successor app, medium = well-known mapping, low = guess.
+# Rows whose intent matches a library/alias row attach their t-codes to it; others become standalone seed entries titled by `note`.
+# Low-confidence rows are hidden once a tenant scan shows the intent does not exist there.
+tcode,semanticObject,action,appId,paramKey,confidence,note
+# --- Purchasing (MM-PUR)
+ME21N;ME21;ME25,PurchaseOrder,create,,,high,Create Purchase Order
+ME22N;ME22;ME2L;ME2M;ME2N;ME2K;ME2W;ME2B;ME2C,PurchaseOrder,manage,F0842A,PurchaseOrder,high,Manage Purchase Orders
+ME23N;ME23,PurchaseOrder,displayFactSheet,,PurchaseOrder,high,Purchase Order
+ME28;ME29N,PurchaseOrder,release,,PurchaseOrder,medium,Release Purchase Orders
+ME51N;ME51,PurchaseRequisition,create,F1643,,medium,Create Purchase Requisition
+ME52N;ME53N;ME5A;ME54N;ME55;ME57;ME58,PurchaseRequisition,manage,F2229,PurchaseRequisition,medium,Manage Purchase Requisitions
+ME31K;ME32K;ME33K;ME3L;ME3M;ME35K,PurchaseContract,manage,F1600,PurchaseContract,high,Manage Purchase Contracts
+ME31L;ME32L;ME33L;ME38;ME3B,PurchaseScheduleAgreement,manage,F2179,PurchaseScheduleAgreement,medium,Manage Purchase Scheduling Agreements
+ME41;ME42;ME43;ME4L;ME4M,RequestForQuotation,manage,F2049,RequestForQuotation,low,Manage RFQs
+ME47;ME48;ME49,SupplierQuotation,manage,F2050,SupplierQuotation,low,Manage Supplier Quotations
+ME11;ME12;ME13;ME1L;ME1M,PurchasingInfoRecord,manage,F1982,,medium,Manage Purchasing Info Records
+ME01;ME03,SourceList,manage,F1859,,low,Manage Source Lists
+ME81N;ME80FN;ME2A,PurchaseOrder,analyzeItems,F1604,,low,Purchase Order Items analysis
+MEQ1;MEQ3,QuotaArrangement,manage,F1866,,low,Manage Quota Arrangements
+# --- Inventory (MM-IM)
+MIGO;MB01;MB1A;MB1B;MB1C;MB11,MaterialDocument,create,F0843,,low,Post Goods Movement
+MB51;MB03;MB52;MB5B,MaterialDocument,displayOverview,F1077,,low,Material Documents Overview
+MMBE;MB52;MB53,Material,displayStockOverview,,Material,medium,Stock - Single Material
+MB5T;MB5TD,Material,displayStockInTransit,,,low,Stock in Transit
+MI01;MI04;MI07;MI20;MI31,PhysicalInventoryDocument,manage,F1377,,medium,Manage Physical Inventory Documents
+# --- Supplier invoices (MM-IV)
+MIRO,SupplierInvoice,create,F0859,,medium,Create Supplier Invoice
+MIR4;MIR6;MIR5;MRBR;MIR7,SupplierInvoice,manage,F1060,SupplierInvoice,medium,Manage Supplier Invoices
+MR8M,SupplierInvoice,reverse,,SupplierInvoice,low,Reverse Supplier Invoice
+# --- Supplier / customer / BP master data
+XK01;XK02;XK03;MK01;MK02;MK03;FK01;FK02;FK03;XK05;XK06,Supplier,manageMasterData,F1053,,high,Manage Supplier Master Data
+XD01;XD02;XD03;FD01;FD02;FD03;VD01;VD02;VD03;XD05;XD06,Customer,manageMasterData,F0850A,,high,Manage Customer Master Data
+BP;BUP1;BUP2;BUP3,BusinessPartner,maintain,F3163,,medium,Maintain Business Partner
+MM01;MM02;MM03;MM50;MM17;MMAM,Product,manage,F1602,,medium,Manage Product Master Data
+MM04;MM60,Product,displayFactSheet,,Product,low,Product
+# --- Sales (SD)
+VA01,SalesOrder,create,,,high,Create Sales Order
+VA02;VA05;VA05N;V.00;V_V2,SalesOrder,manage,F1873,SalesOrder,high,Manage Sales Orders
+VA03,SalesOrder,displayFactSheet,,SalesOrder,high,Sales Order
+VA11;VA12;VA13;VA15,SalesInquiry,manage,F1872,SalesInquiry,medium,Manage Sales Inquiries
+VA21;VA22;VA23;VA25,SalesQuotation,manage,F1861,SalesQuotation,medium,Manage Sales Quotations
+VA41;VA42;VA43;VA45,SalesContract,manage,F1890,SalesContract,medium,Manage Sales Contracts
+VA31;VA32;VA33,SalesScheduleAgreement,manage,,SalesScheduleAgreement,low,Manage Sales Scheduling Agreements
+VA51;VA52;VA53,SalesOrderWithoutCharge,manage,,SalesOrderWithoutCharge,low,Manage Sales Orders Without Charge
+VL01N;VL02N;VL03N;VL10;VL10A;VL10B;VL06O;VL06G,OutboundDelivery,manage,F0867A,OutboundDelivery,medium,Manage Outbound Deliveries
+VL31N;VL32N;VL33N;VL06I,InboundDelivery,manage,F2098,InboundDelivery,low,Manage Inbound Deliveries
+VF01;VF04;VF06,BillingDocument,create,F0798,,medium,Create Billing Documents
+VF02;VF03;VF05;VF05N;VF11,BillingDocument,manage,F0797,BillingDocument,medium,Manage Billing Documents
+VF31;VF02;VF07,BillingDocument,displayFactSheet,,BillingDocument,low,Billing Document
+VK11;VK12;VK13;VK31;VK32,PricingCondition,manage,F2651,,low,Manage Prices - Sales
+VKM1;VKM4,CreditManagement,manage,F0732,,low,Manage Credit Cases
+VT01N;VT02N;VT03N,Shipment,manage,,,low,Manage Shipments
+# --- Finance (FI)
+FB03;FB02;FB08;FB04;FBV0,AccountingDocument,manage,F0717,,medium,Manage Journal Entries
+FB50;FB01;F-02;FB50L;FBV1,AccountingDocument,create,F0718,,low,Post General Journal Entries
+FB60;FB65;F-43;F-41,SupplierInvoice,createNonPO,F0859,,low,Create Supplier Invoice (no PO)
+FB70;FB75;F-22;F-27,CustomerInvoice,create,F0770,,low,Create Outgoing Invoice
+FBL1N;FBL1H,Supplier,displayLineItems,F0712,Supplier,medium,Display Supplier Line Items
+FBL5N;FBL5H,Customer,displayLineItems,F0711,Customer,medium,Display Customer Line Items
+FBL3N;FBL3H;FAGLL03,GLAccount,displayLineItems,F0706,GLAccount,medium,Display G/L Account Line Items
+FS00;FSP0;FSS0;FS04,GLAccount,manageMasterData,F0731A,,medium,Manage G/L Account Master Data
+F110;F110S,AutomaticPayment,manage,F0770,,low,Manage Automatic Payments
+F-28;F-26;F-52,IncomingPayment,post,F0773,,low,Post Incoming Payments
+F-53;F-58,OutgoingPayment,post,F0773,,low,Post Outgoing Payments
+F-32;F-44;F-03,OpenItem,clear,F0773,,low,Clear Open Items
+FBRA;FB08,AccountingDocument,reverse,,,low,Reverse Journal Entry
+FAGLB03;FS10N,GLAccount,displayBalances,F0707,GLAccount,medium,Display G/L Account Balances
+FK10N,Supplier,displayBalances,F0725,Supplier,medium,Display Supplier Balances
+FD10N,Customer,displayBalances,F0726,Customer,medium,Display Customer Balances
+FBZP,PaymentMethod,manage,,,low,Payment Program Configuration
+FF_5;FF67,BankStatement,manage,F1520,,low,Manage Bank Statements
+FI12;FI01;FI02;FI03,HouseBank,manage,F1366,,low,Manage Banks
+OB08;OB07,ExchangeRate,manage,F3429,,low,Currency Exchange Rates
+AS01;AS02;AS03,FixedAsset,manage,F1976,,low,Manage Fixed Assets
+AW01N;AW01,FixedAsset,displayFactSheet,,FixedAsset,low,Asset Explorer
+AFAB;AFAR,DepreciationRun,manage,F1281,,low,Schedule Asset Accounting Jobs
+F.13;F.19,OpenItem,clearAutomatically,,,low,Automatic Clearing
+FAGLGVTR;FAGL_FC_VAL,ClosingTask,manage,F1256,,low,Closing tasks
+# --- Controlling (CO)
+KS01;KS02;KS03;KS05;KS13,CostCenter,manage,F1443A,,medium,Manage Cost Centers
+KSB1;KSB5,CostCenter,displayLineItems,F0784,CostCenter,medium,Cost Center line items
+KP06;KP26;KP46,CostCenter,planCosts,,,low,Cost Center Planning
+KA01;KA02;KA03;KA06,CostElement,manage,F0731A,,low,Manage G/L Accounts (cost elements)
+KO01;KO02;KO03;KOK5;KO88,InternalOrder,manage,F1604A,InternalOrder,low,Manage Internal Orders
+KOB1,InternalOrder,displayLineItems,,InternalOrder,low,Internal Order line items
+KE51;KE52;KE53,ProfitCenter,manage,F3517,,medium,Manage Profit Centers
+KE24;KE30,ProfitabilityAnalysis,display,,,low,Profitability Analysis
+CJ20N;CJ01;CJ02;CJ03;CJ40,Project,manage,F3215,,low,Manage Projects
+S_ALR_87013611;S_ALR_87013612,CostCenter,displayActualsPlan,F0963,,low,Cost Centers - Plan/Actual
+# --- Production (PP)
+CO01;CO02;CO03;COOIS;COHV;CO40;CO41,ProductionOrder,manage,F2336,ProductionOrder,medium,Manage Production Orders
+CO11N;CO15;CO1V,ProductionOrder,confirm,F3069,ProductionOrder,low,Confirm Production Operation
+MD01;MD02;MD03;MD01N,MRPRun,schedule,F1339,,low,Schedule MRP Runs
+MD04;MD05;MD07;MD06,Material,monitorCoverage,F0251,Material,medium,Monitor Material Coverage
+MD11;MD12;MD13;MD16,PlannedOrder,manage,F3078,PlannedOrder,low,Manage Planned Orders
+CS01;CS02;CS03;CS11;CS12,BillOfMaterial,manage,F3140,,low,Manage Bills of Material
+CA01;CA02;CA03,Routing,manage,,,low,Manage Routings
+CR01;CR02;CR03,WorkCenter,manage,F2969,,low,Manage Work Centers
+C201;C202;C203,MasterRecipe,manage,,,low,Manage Master Recipes
+# --- Quality (QM)
+QA32;QA33;QA11;QA01,InspectionLot,manage,F2347,InspectionLot,low,Manage Inspection Lots
+QE51N;QE01;QE11,InspectionLot,recordResults,F1685,InspectionLot,low,Record Inspection Results
+QM01;QM02;QM03;QM10,QualityNotification,manage,F2284,,low,Manage Quality Notifications
+# --- Plant maintenance (PM / EAM)
+IW21;IW22;IW23;IW28;IW29,MaintenanceNotification,manage,F2071,MaintenanceNotification,low,Manage Maintenance Notifications
+IW31;IW32;IW33;IW38;IW39,MaintenanceOrder,manage,F2081,MaintenanceOrder,low,Manage Maintenance Orders
+IW41;IW42,MaintenanceOrder,confirm,,MaintenanceOrder,low,Confirm Maintenance Jobs
+IE01;IE02;IE03;IH08,Equipment,manage,F1893,Equipment,low,Manage Equipment
+IL01;IL02;IL03;IH06,FunctionalLocation,manage,F1894,FunctionalLocation,low,Manage Functional Locations
+IP10;IP30;IP41,MaintenancePlan,manage,F3112,,low,Manage Maintenance Plans
+# --- HR (HCM) basics
+PA20;PA30;PA40,Employee,manage,,,low,Employee master data
+# --- Basis / admin
+SU01;SU01D;SU10,BusinessUser,maintain,F1303,,medium,Maintain Business Users
+PFCG;SU24,BusinessRole,maintain,F1492,,medium,Maintain Business Roles
+SM59;SOAMANAGER,CommunicationArrangement,manage,F1596,,low,Communication Arrangements
+SLG1,ApplicationLog,display,F2240,,low,Application Logs
+SM37;SM36,ApplicationJob,manage,F1240,,low,Application Jobs
+SM30;SM31;SPRO,ConfigurationStep,manage,,,low,Manage Your Solution
+SE16;SE16N,CustomCDSView,display,,,low,View Browser
+SE80;SE38,CustomAnalyticalQuery,manage,,,low,Custom development (not in Public Cloud)
+# --- Shell
+HOME,Shell,home,,,high,Launchpad home
+FINDER;APPFINDER,Shell,appfinder,,,high,App Finder

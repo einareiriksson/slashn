@@ -1,0 +1,37 @@
+# Hand-made seed aliases. Columns: alias,semanticObject,action,appId,tcodes,title,paramKey
+# tcodes are ';'-separated. appId is the Fiori app ID when known. paramKey is the URL parameter used for `s <sys> <alias> <value>`.
+# Intents are the classic S/4HANA Cloud Public Edition ones; discovery on a tenant takes precedence once it has run.
+alias,semanticObject,action,appId,tcodes,title,paramKey
+home,Shell,home,,,Launchpad home,
+finder,Shell,appfinder,,,App Finder,
+me21n,PurchaseOrder,create,,ME21N,Create Purchase Order,
+po,PurchaseOrder,manage,F0842A,ME22N;ME2L;ME2M;ME2N;ME2K;ME2W,Manage Purchase Orders,PurchaseOrder
+me23n,PurchaseOrder,displayFactSheet,,ME23N,Purchase Order,PurchaseOrder
+me51n,PurchaseRequisition,create,F1643,ME51N,Create Purchase Requisition,
+pr,PurchaseRequisition,manage,F2229,ME52N;ME53N;ME5A;ME54N,Manage Purchase Requisitions,PurchaseRequisition
+contract,PurchaseContract,manage,F1600,ME31K;ME32K;ME33K;ME3L;ME3M,Manage Purchase Contracts,PurchaseContract
+sa,PurchaseScheduleAgreement,manage,F2179,ME31L;ME32L;ME33L;ME38,Manage Purchase Scheduling Agreements,PurchaseScheduleAgreement
+miro,SupplierInvoice,create,F0859,MIRO,Create Supplier Invoice,
+inv,SupplierInvoice,manage,F1060,MIR4;MIR6;MRBR;MIR5,Manage Supplier Invoices,SupplierInvoice
+sup,Supplier,manageMasterData,F1053,XK01;XK02;XK03;MK01;MK02;MK03;FK01;FK02;FK03,Manage Supplier Master Data,
+cust,Customer,manageMasterData,F0850A,XD01;XD02;XD03;FD01;FD02;FD03;VD01;VD02;VD03,Manage Customer Master Data,
+bp,BusinessPartner,maintain,F3163,BP,Maintain Business Partner,
+mat,Product,manage,F1602,MM01;MM02;MM03;MM50,Manage Product Master Data,
+mmbe,Material,displayStockOverview,F1077,MMBE,Stock - Single Material,Material
+va01,SalesOrder,create,,VA01,Create Sales Order,
+so,SalesOrder,manage,F1873,VA02;VA05;VA05N,Manage Sales Orders,SalesOrder
+va03,SalesOrder,displayFactSheet,,VA03,Sales Order,SalesOrder
+quote,SalesQuotation,manage,F1861,VA21;VA22;VA23;VA25,Manage Sales Quotations,SalesQuotation
+dlv,OutboundDelivery,manage,F0867A,VL01N;VL02N;VL03N;VL10;VL06O,Manage Outbound Deliveries,OutboundDelivery
+vf01,BillingDocument,create,F0798,VF01;VF04,Create Billing Documents,
+bill,BillingDocument,manage,F0797,VF02;VF03;VF05;VF05N,Manage Billing Documents,BillingDocument
+je,AccountingDocument,manage,F0717,FB03;FB02;FB08,Manage Journal Entries,
+fb50,AccountingDocument,create,F0718,FB50;FB01;F-02,Post General Journal Entries,
+gl,GLAccount,manageMasterData,F0731A,FS00;FSP0;FSS0,Manage G/L Account Master Data,
+cc,CostCenter,manage,F1443A,KS01;KS02;KS03;KS05,Manage Cost Centers,
+f110,AutomaticPayment,manage,F0770,F110,Manage Automatic Payments,
+prodord,ProductionOrder,manage,F2336,CO01;CO02;CO03;COOIS,Manage Production Orders,ProductionOrder
+md04,Material,monitorCoverage,F0251,MD04,Monitor Material Coverage,
+users,BusinessUser,maintain,F1303,SU01,Maintain Business Users,
+roles,BusinessRole,maintain,F1492,PFCG,Maintain Business Roles,
+comm,CommunicationArrangement,manage,F1596,,Communication Arrangements,
