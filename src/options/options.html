@@ -9,7 +9,7 @@
 <body>
   <header class="top">
     <h1>SAP QuickStart</h1>
-    <p class="hint">Omnibox: type <code>s</code>, space, then <code>[system] &lt;alias&gt; [value]</code>. <code>s ?</code> lists systems.</p>
+    <p class="hint">Omnibox: type <code>s</code>, space, then <code>[system] &lt;alias&gt; [value]</code>. <code>s ?</code> lists systems. The toolbar icon opens the same launcher as a popup.</p>
     <nav class="tabs" role="tablist">
       <button class="tab" data-tab="systems" role="tab">Systems</button>
       <button class="tab" data-tab="aliases" role="tab">Aliases</button>
@@ -28,8 +28,16 @@
         <input type="file" id="file-json" accept="application/json,.json" hidden>
       </div>
       <div id="sys-errors" class="errors" hidden></div>
+      <div id="sys-warnings" class="warnings" hidden></div>
       <div class="table-wrap"><table id="systems-table" class="grid"></table></div>
       <p class="hint">Keys are what you type in the omnibox (lowercase). Exactly one system is the default; otherwise the most recently used one is picked. Host has no scheme or path, e.g. <code>my123456.s4hana.cloud.sap</code>.</p>
+
+      <h2>Settings</h2>
+      <form id="settings" class="row-form settings">
+        <label>Suggestions <input name="suggestionLimit" type="number" min="1" max="10" size="3"></label>
+        <label>Auto-rescan after <input name="autoScanDays" type="number" min="0" max="365" size="4"> days <span class="muted">(0 = every launchpad load)</span></label>
+        <label class="inline"><input name="reuseTabOnSameHost" type="checkbox"> Reuse the current tab when it is already on the target tenant</label>
+      </form>
 
       <h2>Recent launches</h2>
       <div class="table-wrap"><table id="recent-table" class="grid"></table></div>
@@ -92,6 +100,7 @@
         </div>
         <div id="disc-meta" class="hint"></div>
         <div class="table-wrap"><table id="disc-table" class="grid"></table></div>
+        <details id="disc-missing" class="missing"><summary></summary><div class="table-wrap"><table id="missing-table" class="grid"></table></div></details>
       </div>
     </section>
   </main>

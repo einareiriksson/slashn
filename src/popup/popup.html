@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SAP QuickStart</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div id="current" class="current muted">Checking current tab…</div>
+    <button id="options" class="link" title="Options">⚙</button>
+  </header>
+  <input id="q" type="text" placeholder="[system] alias [value]  —  e.g. acd me23n 4500001234" autocomplete="off" spellcheck="false">
+  <div id="hint" class="hint"></div>
+  <ul id="list" class="list"></ul>
+  <h2>Recent</h2>
+  <ul id="recent" class="list recent"></ul>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -15,6 +15,8 @@ s [<system-key>] <alias> [<value>]
 | `s va41` | guessed from the t-code prefix, offered only if the tenant has `SalesContract-*` |
 | `s ?` | lists your systems |
 
+A parameter only follows a keyed match (alias, t-code, app ID, intent or guess); multi-word title searches cannot carry one.
+
 Plain Enter reuses the current tab when it is already on the target tenant (hash-only navigation, no reload), otherwise a new tab opens. Alt+Enter opens a new foreground tab, Ctrl/Cmd+Enter a background tab (that is how Chrome reports omnibox dispositions).
 
 ## Install (unpacked)
@@ -39,10 +41,14 @@ Two content scripts run on `https://*.s4hana.cloud.sap/ui*`. The MAIN-world scri
 
 Scans run when the launchpad loads on a registered host and the last scan is missing or older than 7 days, or when you click **Rescan now** in options.
 
+## Toolbar popup
+
+Click the toolbar icon for the same launcher as a small panel: it shows the tenant of the active tab (if registered), an input that behaves like the omnibox (type, arrow keys, Enter; Ctrl/Cmd+Enter for a new tab), and the last ten launches.
+
 ## Options page
 
-- **Systems**: inline table (key, name, customer, host, env, default, optional launchpad path), per-row Open launchpad / Rescan now / Delete, last scan and app count, recent launches with **Pin as alias** for guesses and unresolved inputs. Export/import the whole config as JSON.
-- **Aliases**: merged static table with inline editing (editing a seed/library row creates a personal copy; deleting one hides it), CSV import (into a local import table or into your synced aliases) and export, a transaction-code view with "map t-code", and a per-system view of discovered apps with **Pin as alias**.
+- **Systems**: settings (suggestion limit, auto-rescan interval, tab reuse), inline table (key, name, customer, host, env, default, optional launchpad path), per-row Open launchpad / Rescan now / Delete, last scan and app count, a warning when a system key collides with an alias, recent launches with **Pin as alias** for guesses and unresolved inputs. Export/import the whole config as JSON.
+- **Aliases**: merged static table with inline editing (editing a seed/library row creates a personal copy; deleting one hides it), CSV import (into a local import table or into your synced aliases) and export, a transaction-code view with "map t-code", and a per-system view of discovered apps with **Pin as alias** plus a list of seed/personal intents that the scanned tenant does not offer.
 
 CSV format: `alias,semanticObject,action,appId,tcodes,title,paramKey`, `tcodes` separated by `;`.
 
@@ -71,4 +77,3 @@ No build step; plain ES modules. `src/resolver.js`, `src/csv.js`, `src/tcodes.js
 - One Chrome profile per customer is recommended when IAS tenants collide; each profile keeps its own systems list.
 - A deep link opened while your IAS session has expired may lose its hash after login; re-run the command.
 - On-premise S/4HANA is not supported yet; the `launchpadPath` field exists so it can be added without a migration.
-- No popup; the omnibox is the only launch surface.

@@ -1,6 +1,6 @@
 // SAP QuickStart — options page.
 import { createStorage, validateSystems, normalizeSystem, ENVS, ALIAS_RE } from '../storage.js';
-import { mergeEntries, normalizeEntry, homeUrl, splitIntent } from '../resolver.js';
+import { mergeEntries, normalizeEntry, homeUrl, splitIntent, entryKey } from '../resolver.js';
 import { aliasesFromCsv, aliasesToCsv } from '../csv.js';
 import { MSG } from '../messages.js';
 
@@ -42,7 +42,7 @@ function download(name, text, type = 'text/plain') {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function readFile(input, accept) {
+function readFile(input) {
   return new Promise((resolve) => {
     input.value = '';
     input.onchange = () => {
@@ -66,31 +66,33 @@ const entriesForHost = (host) => mergeEntries({ user: snap.userAliases, seed: [.
 
 // ---------------------------------------------------------------- data mutations
 
-async function saveUserAliases(list) {
+/**
+ * Copy-on-write: upserts `entry` into the user list (keyed by alias, or "#intent" when alias-less).
+ * `orig` is the row that was edited. A seed/library original is hidden when the copy cannot shadow it
+ * (alias changed, or no alias at all); shadowing by identical alias needs no tombstone.
+ */
+async function upsertUserAlias(entry, orig = null) {
+  const next = normalizeEntry({ ...entry, source: 'user', discoveredOnTarget: false });
+  const nextKey = entryKey(next);
+  const origKey = orig ? entryKey(orig) : null;
+  const list = (await storage.getUserAliases()).filter((a) => entryKey(a) !== nextKey && entryKey(a) !== origKey);
+  list.push(next);
   await storage.setUserAliases(list);
-}
-
-/** Copy-on-write: returns the user alias list with `entry` upserted (keyed by its original alias). */
-async function upsertUserAlias(entry, originalAlias = null) {
-  const list = (await storage.getUserAliases()).filter((a) => a.alias !== (originalAlias ?? entry.alias) && a.alias !== entry.alias);
-  list.push(normalizeEntry({ ...entry, source: 'user' }));
-  await saveUserAliases(list);
-  if (originalAlias && originalAlias !== entry.alias) {
+  if (orig && (orig.source === 'seed' || orig.source === 'library') && (!orig.alias || origKey !== nextKey)) {
     const hidden = await storage.getHiddenAliases();
-    if (!hidden.includes(originalAlias)) await storage.setHiddenAliases([...hidden, originalAlias]);
+    if (!hidden.includes(origKey)) await storage.setHiddenAliases([...hidden, origKey]);
   }
 }
 
 async function deleteEntry(entry) {
+  const key = entryKey(entry);
   if (entry.source === 'user') {
-    await saveUserAliases((await storage.getUserAliases()).filter((a) => a.alias !== entry.alias));
+    await storage.setUserAliases((await storage.getUserAliases()).filter((a) => entryKey(a) !== key));
   } else if (entry.source === 'import') {
-    await storage.setImportedAliases((await storage.getImportedAliases()).filter((a) => a.alias !== entry.alias));
-  } else if (entry.alias) {
-    const hidden = await storage.getHiddenAliases();
-    if (!hidden.includes(entry.alias)) await storage.setHiddenAliases([...hidden, entry.alias]);
+    await storage.setImportedAliases((await storage.getImportedAliases()).filter((a) => entryKey(a) !== key));
   } else {
-    throw new Error('This row has no alias and cannot be hidden; map its t-code to another intent instead.');
+    const hidden = await storage.getHiddenAliases();
+    if (!hidden.includes(key)) await storage.setHiddenAliases([...hidden, key]);
   }
 }
 
@@ -108,10 +110,16 @@ function render() {
   $$('.subtab').forEach((b) => b.classList.toggle('active', b.dataset.sub === ui.sub));
   $$('.subpanel').forEach((p) => { p.hidden = p.id !== `sub-${ui.sub}`; });
   renderSystems();
+  renderSettings();
   renderRecent();
   renderAliases();
   renderTcodes();
   renderDiscovered();
+}
+
+function keyCollisionWarnings(systems) {
+  const aliases = new Map(staticEntries().filter((e) => e.alias).map((e) => [e.alias, e]));
+  return systems.filter((s) => aliases.has(s.key)).map((s) => `System key "${s.key}" is also an alias (${aliases.get(s.key).intent}); "s ${s.key}" opens the launchpad, so use "s ${systems.find((x) => x.isDefault)?.key || '<system>'} ${s.key}" for the app or rename one of them.`);
 }
 
 function renderSystems() {
@@ -137,6 +145,16 @@ function renderSystems() {
       </td></tr>`;
   }).join('');
   $('#systems-table').innerHTML = `<thead><tr><th>Key</th><th>Name</th><th>Customer</th><th>Host</th>${adv ? '<th>Path</th>' : ''}<th>Env</th><th>Default</th><th>Last scanned</th><th>Apps</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="10" class="muted">No systems yet. Click "Add system".</td></tr>'}</tbody>`;
+  const warnings = keyCollisionWarnings(snap.systems);
+  $('#sys-warnings').hidden = !warnings.length;
+  $('#sys-warnings').textContent = warnings.join('\n');
+}
+
+function renderSettings() {
+  const f = $('#settings');
+  f.suggestionLimit.value = snap.settings.suggestionLimit;
+  f.autoScanDays.value = snap.settings.autoScanDays;
+  f.reuseTabOnSameHost.checked = Boolean(snap.settings.reuseTabOnSameHost);
 }
 
 function renderRecent() {
@@ -155,8 +173,8 @@ function renderAliases() {
   if (q) list = list.filter((e) => [e.alias, e.intent, e.title, e.appId, ...(e.tcodes || [])].some((v) => String(v || '').toLowerCase().includes(q)));
   const total = list.length;
   list = list.slice(0, 500);
-  const rows = list.map((e, i) => `<tr data-idx="${i}" data-alias="${esc(e.alias ?? '')}" data-intent="${esc(e.intent)}" data-source="${esc(e.source)}">
-    <td><input data-field="alias" value="${esc(e.alias ?? '')}" class="cell-sm"></td>
+  const rows = list.map((e, i) => `<tr data-idx="${i}">
+    <td><input data-field="alias" value="${esc(e.alias ?? '')}" class="cell-sm" placeholder="(none)"></td>
     <td><input data-field="intent" value="${esc(e.intent)}"></td>
     <td><input data-field="appId" value="${esc(e.appId ?? '')}" class="cell-sm"></td>
     <td><input data-field="tcodes" value="${esc((e.tcodes || []).join(';'))}"></td>
@@ -165,11 +183,10 @@ function renderAliases() {
     <td><span class="chip ${esc(e.source)}">${esc(e.source)}</span>${e.confidence === 'low' ? ' <span class="chip low">guess</span>' : ''}</td>
     <td><button class="small danger" data-action="delete-alias" data-idx="${i}">${e.source === 'user' || e.source === 'import' ? 'Delete' : 'Hide'}</button></td></tr>`).join('');
   $('#aliases-table').innerHTML = `<thead><tr><th>Alias</th><th>Intent</th><th>App ID</th><th>T-codes</th><th>Title</th><th>Param key</th><th>Source</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="muted">No aliases match.</td></tr>'}</tbody>`;
-  $('#aliases-table').dataset.count = String(total);
   renderAliases.visible = list;
   const hidden = snap.hiddenAliases || [];
   $('#hidden-list').innerHTML = hidden.length
-    ? `Hidden: ${hidden.map((h) => `<code>${esc(h)}</code> <button class="small" data-action="restore-alias" data-alias="${esc(h)}">restore</button>`).join(' ')}`
+    ? `Hidden: ${hidden.map((h) => `<code>${esc(h)}</code> <button class="small" data-action="restore-alias" data-key="${esc(h)}">restore</button>`).join(' ')}`
     : '';
   if (total > list.length) $('#hidden-list').innerHTML += `<div>Showing ${list.length} of ${total}; refine the filter.</div>`;
 }
@@ -184,7 +201,7 @@ function renderTcodes() {
   $('#tcodes-table').innerHTML = `<thead><tr><th>T-code</th><th>Intent</th><th>Title</th><th>Alias</th><th>Source</th><th></th></tr></thead><tbody>${list.map((r, i) => `<tr>
     <td><code>${esc(r.tcode.toUpperCase())}</code></td><td><code>${esc(r.e.intent)}</code></td><td>${esc(r.e.title)}</td><td>${esc(r.e.alias ?? '')}</td>
     <td><span class="chip ${esc(r.e.source)}">${esc(r.e.source)}</span>${r.e.confidence === 'low' ? ' <span class="chip low">guess</span>' : ''}</td>
-    <td>${r.e.alias ? `<button class="small danger" data-action="unmap-tcode" data-idx="${i}">Remove</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No t-codes match.</td></tr>'}</tbody>`;
+    <td><button class="small danger" data-action="unmap-tcode" data-idx="${i}">Remove</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">No t-codes match.</td></tr>'}</tbody>`;
 }
 
 function renderDiscovered() {
@@ -197,12 +214,25 @@ function renderDiscovered() {
     ? `Scanned ${esc(new Date(rec.scannedAt).toLocaleString())} · ${esc(rec.entries.length)} intents · UI5 ${esc(rec.ui5Version || '?')} · ${esc(JSON.stringify(rec.methods || {}))}${rec.errors?.length ? `<br>Warnings: ${esc(rec.errors.join(' | '))}` : ''}`
     : `Not scanned yet${meta ? '' : ' – open the launchpad on this system (or click Rescan now) to discover its apps.'}`;
   const q = ($('#disc-filter').value || '').trim().toLowerCase();
-  const merged = host ? entriesForHost(host).filter((e) => e.source === 'discovered') : [];
-  const list = merged.filter((e) => !q || [e.intent, e.title, e.appId, e.alias, ...(e.tcodes || [])].some((v) => String(v || '').toLowerCase().includes(q))).slice(0, 500);
+  const merged = host ? entriesForHost(host) : [];
+  const discoveredOnly = merged.filter((e) => e.source === 'discovered');
+  const list = discoveredOnly.filter((e) => !q || [e.intent, e.title, e.appId, e.alias, ...(e.tcodes || [])].some((v) => String(v || '').toLowerCase().includes(q))).slice(0, 500);
   renderDiscovered.visible = list;
   $('#disc-table').innerHTML = `<thead><tr><th>Intent</th><th>Title</th><th>App ID</th><th>Auto alias</th><th>T-codes</th><th>Param</th><th></th></tr></thead><tbody>${list.map((e, i) => `<tr>
     <td><code>${esc(e.intent)}</code></td><td>${esc(e.title)}</td><td>${esc(e.appId ?? '')}</td><td>${esc(e.alias ?? '')}</td><td>${esc((e.tcodes || []).join(' '))}</td><td>${esc(e.paramKey ?? '')}</td>
-    <td><button class="small" data-action="pin-discovered" data-idx="${i}">Pin as alias</button></td></tr>`).join('') || `<tr><td colspan="7" class="muted">${merged.length ? 'No entries match.' : 'Nothing discovered for this system yet.'}</td></tr>`}</tbody>`;
+    <td><button class="small" data-action="pin-discovered" data-idx="${i}">Pin as alias</button></td></tr>`).join('') || `<tr><td colspan="7" class="muted">${discoveredOnly.length ? 'No entries match.' : 'Nothing discovered for this system yet.'}</td></tr>`}</tbody>`;
+
+  // Seed / personal / imported intents the tenant does not offer (library rows are too many to be useful here).
+  const details = $('#disc-missing');
+  if (!rec) { details.hidden = true; return; }
+  details.hidden = false;
+  const have = new Set(rec.entries.map((e) => String(e.intent).toLowerCase()));
+  const missing = mergeEntries({ user: snap.userAliases, seed: [...snap.seedAliases, ...snap.importedAliases], hidden: snap.hiddenAliases })
+    .filter((e) => e.source !== 'library' && !have.has(e.intent.toLowerCase()) && !/^Shell-/.test(e.intent))
+    .sort((a, b) => (a.alias || '~').localeCompare(b.alias || '~') || a.intent.localeCompare(b.intent));
+  $('summary', details).textContent = `${missing.length} seed/personal intents not found on this tenant (hidden from suggestions when marked guess)`;
+  $('#missing-table').innerHTML = `<thead><tr><th>Alias</th><th>Intent</th><th>Title</th><th>T-codes</th><th>Source</th><th>Confidence</th></tr></thead><tbody>${missing.slice(0, 500).map((e) => `<tr>
+    <td>${esc(e.alias ?? '')}</td><td><code>${esc(e.intent)}</code></td><td>${esc(e.title)}</td><td>${esc((e.tcodes || []).join(' '))}</td><td><span class="chip ${esc(e.source)}">${esc(e.source)}</span></td><td>${esc(e.confidence || '')}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Every seed and personal intent exists on this tenant.</td></tr>'}</tbody>`;
 }
 
 // ---------------------------------------------------------------- systems editing
@@ -231,10 +261,19 @@ const saveSystems = debounce(async () => {
   try {
     await storage.setSystems(systems);
     draftSystems = null;
-    toast('Systems saved');
+    const warnings = keyCollisionWarnings(systems);
+    toast(warnings.length ? 'Systems saved (see warning)' : 'Systems saved');
   } catch (e) {
     showErrors('#sys-errors', [String(e.message || e)]);
   }
+}, 300);
+
+const saveSettings = debounce(async () => {
+  const f = $('#settings');
+  const limit = Math.min(10, Math.max(1, Number(f.suggestionLimit.value) || 6));
+  const days = Math.min(365, Math.max(0, Number(f.autoScanDays.value) || 0));
+  await storage.setSettings({ suggestionLimit: limit, autoScanDays: days, reuseTabOnSameHost: f.reuseTabOnSameHost.checked });
+  toast('Settings saved');
 }, 300);
 
 // ---------------------------------------------------------------- alias editing
@@ -243,23 +282,23 @@ async function onAliasCellChange(tr) {
   const orig = renderAliases.visible?.[Number(tr.dataset.idx)];
   if (!orig) return;
   const get = (f) => $(`[data-field="${f}"]`, tr).value.trim();
-  const alias = get('alias').toLowerCase();
+  const alias = get('alias').toLowerCase() || null;
   const intent = get('intent');
   const errors = [];
-  if (!ALIAS_RE.test(alias)) errors.push(`alias "${alias}" must match ${ALIAS_RE}`);
+  if (alias && !ALIAS_RE.test(alias)) errors.push(`alias "${alias}" must match ${ALIAS_RE}`);
   if (!INTENT_RE.test(intent)) errors.push(`intent "${intent}" must look like SemanticObject-action`);
   showErrors('#alias-errors', errors);
   if (errors.length) return;
   const [semanticObject, action] = splitIntent(intent);
   const entry = { alias, semanticObject, action, intent, appId: get('appId') || null, tcodes: get('tcodes'), title: get('title') || intent, paramKey: get('paramKey') || null };
   if (orig.source === 'import') {
-    const list = (await storage.getImportedAliases()).filter((a) => a.alias !== orig.alias);
+    const list = (await storage.getImportedAliases()).filter((a) => entryKey(a) !== entryKey(orig));
     list.push(normalizeEntry({ ...entry, source: 'import' }));
     await storage.setImportedAliases(list);
   } else {
-    await upsertUserAlias(entry, orig.alias);
+    await upsertUserAlias(entry, orig);
   }
-  toast(`Saved "${alias}"`);
+  toast(`Saved "${alias || intent}"`);
 }
 
 async function pinEntry(base, suggested) {
@@ -269,7 +308,7 @@ async function pinEntry(base, suggested) {
   if (!ALIAS_RE.test(a)) { toast(`Invalid alias "${a}"`); return; }
   const clash = staticEntries().find((e) => e.alias === a && e.intent !== base.intent);
   if (clash && !confirm(`"${a}" already points to ${clash.intent}. Replace it?`)) return;
-  await upsertUserAlias({ ...base, alias: a, source: 'user' });
+  await upsertUserAlias({ ...base, alias: a, source: 'user' }, null);
   toast(`Pinned "${a}"`);
 }
 
@@ -345,17 +384,11 @@ document.addEventListener('click', async (ev) => {
         const { entries, errors } = aliasesFromCsv(f.text, { source: target });
         showErrors('#alias-errors', errors.map((e) => `line ${e.line}: ${e.message}`));
         if (!entries.length) { toast('No rows imported'); return; }
-        if (target === 'user') {
-          const current = mode === 'replace' ? [] : await storage.getUserAliases();
-          const byAlias = new Map(current.map((a) => [a.alias, a]));
-          for (const e of entries) byAlias.set(e.alias, e);
-          await saveUserAliases([...byAlias.values()]);
-        } else {
-          const current = mode === 'replace' ? [] : await storage.getImportedAliases();
-          const byAlias = new Map(current.map((a) => [a.alias, a]));
-          for (const e of entries) byAlias.set(e.alias, e);
-          await storage.setImportedAliases([...byAlias.values()]);
-        }
+        const current = mode === 'replace' ? [] : target === 'user' ? await storage.getUserAliases() : await storage.getImportedAliases();
+        const byKey = new Map(current.map((a) => [entryKey(a), a]));
+        for (const e of entries) byKey.set(entryKey(normalizeEntry(e)), e);
+        if (target === 'user') await storage.setUserAliases([...byKey.values()]);
+        else await storage.setImportedAliases([...byKey.values()]);
         toast(`Imported ${entries.length} aliases (${mode}) into ${target === 'user' ? 'my aliases' : 'local import table'}`);
         break;
       }
@@ -367,19 +400,27 @@ document.addEventListener('click', async (ev) => {
         const e = renderAliases.visible?.[Number(btn.dataset.idx)];
         if (!e) return;
         await deleteEntry(e);
-        toast(e.source === 'user' || e.source === 'import' ? `Deleted "${e.alias}"` : `Hidden "${e.alias}"`);
+        toast(e.source === 'user' || e.source === 'import' ? `Deleted "${e.alias || e.intent}"` : `Hidden "${e.alias || e.intent}"`);
         break;
       }
       case 'restore-alias': {
-        await storage.setHiddenAliases((await storage.getHiddenAliases()).filter((h) => h !== btn.dataset.alias));
-        toast(`Restored "${btn.dataset.alias}"`);
+        await storage.setHiddenAliases((await storage.getHiddenAliases()).filter((h) => h !== btn.dataset.key));
+        toast(`Restored "${btn.dataset.key}"`);
         break;
       }
       case 'unmap-tcode': {
         const r = renderTcodes.visible?.[Number(btn.dataset.idx)];
         if (!r) return;
-        await upsertUserAlias({ ...r.e, tcodes: r.e.tcodes.filter((t) => t !== r.tcode) }, r.e.alias);
-        toast(`Removed ${r.tcode.toUpperCase()} from "${r.e.alias}"`);
+        const remaining = r.e.tcodes.filter((t) => t !== r.tcode);
+        if (r.e.source === 'import') {
+          const list = (await storage.getImportedAliases()).map((a) => (entryKey(a) === entryKey(r.e) ? { ...a, tcodes: remaining } : a));
+          await storage.setImportedAliases(list);
+        } else if (!remaining.length && !r.e.alias && r.e.source !== 'user') {
+          await deleteEntry(r.e); // alias-less seed row with its only t-code removed: just hide it
+        } else {
+          await upsertUserAlias({ ...r.e, tcodes: remaining }, r.e);
+        }
+        toast(`Removed ${r.tcode.toUpperCase()} from ${r.e.alias || r.e.intent}`);
         break;
       }
       case 'pin-discovered': {
@@ -409,6 +450,7 @@ document.addEventListener('change', async (ev) => {
   const el = ev.target;
   if (el.matches('[data-action="toggle-advanced"]')) { ui.advanced = el.checked; renderSystems(); return; }
   if (el.closest('#systems-table')) { saveSystems(); return; }
+  if (el.closest('#settings')) { saveSettings(); return; }
   if (el.closest('#aliases-table') && el.matches('[data-field]')) { await onAliasCellChange(el.closest('tr')); return; }
   if (el.id === 'alias-source') renderAliases();
   if (el.id === 'disc-host') { ui.discHost = el.value; renderDiscovered(); }
@@ -428,7 +470,7 @@ $('#alias-add').addEventListener('submit', async (ev) => {
   const [semanticObject, action] = splitIntent(intent);
   const alias = String(fd.get('alias')).trim().toLowerCase();
   try {
-    await upsertUserAlias({ alias, semanticObject, action, intent, appId: String(fd.get('appId') || '').trim() || null, tcodes: String(fd.get('tcodes') || ''), title: String(fd.get('title') || '').trim() || intent, paramKey: String(fd.get('paramKey') || '').trim() || null });
+    await upsertUserAlias({ alias, semanticObject, action, intent, appId: String(fd.get('appId') || '').trim() || null, tcodes: String(fd.get('tcodes') || ''), title: String(fd.get('title') || '').trim() || intent, paramKey: String(fd.get('paramKey') || '').trim() || null }, null);
     ev.target.reset();
     toast(`Added "${alias}"`);
   } catch (e) {
@@ -443,6 +485,7 @@ $('#tcode-add').addEventListener('submit', async (ev) => {
   const target = String(fd.get('target')).trim();
   const all = staticEntries();
   let base = all.find((e) => e.alias === target.toLowerCase()) || all.find((e) => e.intent.toLowerCase() === target.toLowerCase());
+  let orig = base || null;
   if (!base) {
     if (!INTENT_RE.test(target)) { showErrors('#tcode-errors', [`"${target}" is neither a known alias nor a SemanticObject-action`]); return; }
     const [semanticObject, action] = splitIntent(target);
@@ -450,7 +493,7 @@ $('#tcode-add').addEventListener('submit', async (ev) => {
   }
   if (!base.alias) base = { ...base, alias: tcode };
   showErrors('#tcode-errors', []);
-  await upsertUserAlias({ ...base, tcodes: [...(base.tcodes || []), tcode] }, base.alias);
+  await upsertUserAlias({ ...base, tcodes: [...(base.tcodes || []), tcode] }, orig);
   ev.target.reset();
   toast(`Mapped ${tcode.toUpperCase()} → ${base.intent}`);
 });

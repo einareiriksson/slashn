@@ -216,3 +216,9 @@ test('mergeEntries: low-confidence seed rows are dropped once a scan proves them
   const after = mergeEntries({ seed: low, discovered: [{ intent: 'PurchaseOrder-manage', title: 'T' }] });
   assert.deepEqual(after.filter((e) => e.source !== 'discovered').map((e) => e.title).sort(), ['guess kept', 'high stays']);
 });
+
+test('mergeEntries: alias-less rows are hidden by "#intent" tombstones', () => {
+  const seed = [{ alias: null, semanticObject: 'SalesContract', action: 'manage', tcodes: ['va41'], title: 'x' }, { alias: 'po', semanticObject: 'PurchaseOrder', action: 'manage', title: 'y' }];
+  assert.equal(mergeEntries({ seed, hidden: ['#salescontract-manage'] }).length, 1);
+  assert.equal(mergeEntries({ seed, hidden: ['po'] })[0].intent, 'SalesContract-manage');
+});

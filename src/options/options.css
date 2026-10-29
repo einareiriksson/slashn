@@ -64,3 +64,8 @@ table.grid { border-collapse: collapse; width: 100%; min-width: 720px; }
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); }
 .muted { color: var(--muted); }
 .actions { display: flex; gap: 4px; }
+.warnings { background: var(--tst); color: #7a5300; padding: 8px 12px; border-radius: 6px; margin: 8px 0; white-space: pre-wrap; }
+.settings label { display: inline-flex; align-items: center; gap: 6px; margin-right: 16px; }
+.settings input[type="number"] { width: 64px; }
+.missing { margin-top: 12px; }
+.missing summary { cursor: pointer; color: var(--muted); margin-bottom: 6px; }

@@ -153,3 +153,23 @@ test('rescan orchestration', async () => {
   assert.deepEqual(await send({ type: 'nope' }), { ignored: true });
   assert.deepEqual(await send({ type: MSG.PAGE_READY, host: 'x' }, { id: 'other' }), { error: 'foreign sender' });
 });
+
+test('popup messages: resolve, navigate, open url', async () => {
+  const r = await send({ type: MSG.RESOLVE, text: 'acd me23n 4500001234' }, { id: 'ext' });
+  assert.equal(r.kind, 'query');
+  assert.equal(r.system.key, 'acd');
+  assert.equal(r.matches[0].content, 'acd me23n 4500001234');
+  assert.equal(r.matches[0].param, '4500001234');
+  assert.ok(r.hint.includes('me23n') && !r.hint.includes('<'));
+  const sys = await send({ type: MSG.RESOLVE, text: '?' }, { id: 'ext' });
+  assert.deepEqual(sys.matches.map((m) => m.content), ['acd', 'tst']);
+  calls.length = 0;
+  const nav = await send({ type: MSG.NAVIGATE, text: 'tst me21n', disposition: 'newForegroundTab' }, { id: 'ext' });
+  assert.equal(nav.action, 'open');
+  assert.deepEqual(calls[0], ['create', { url: 'https://my2.s4hana.cloud.sap/ui#PurchaseOrder-create', active: true }]);
+  calls.length = 0;
+  const open = await send({ type: MSG.OPEN_URL, url: 'https://my1.s4hana.cloud.sap/ui#Shell-home', host: 'my1.s4hana.cloud.sap', disposition: 'currentTab' }, { id: 'ext' });
+  assert.equal(open.action, 'open');
+  assert.deepEqual(calls[0], ['update', 1, { url: 'https://my1.s4hana.cloud.sap/ui#Shell-home' }]);
+  assert.deepEqual(await send({ type: MSG.OPEN_URL, url: 'javascript:alert(1)', host: 'x' }, { id: 'ext' }), { error: 'bad url' });
+});

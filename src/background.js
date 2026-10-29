@@ -147,17 +147,21 @@ async function onInputChanged(text, suggest) {
 }
 
 async function onInputEntered(text, disposition) {
+  return launch(text, disposition);
+}
+
+async function launch(text, disposition) {
   const cache = await getCache();
   const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey });
   const system = parsed.system;
   if (parsed.kind === 'systems' || !system) {
     await chrome.runtime.openOptionsPage();
-    return;
+    return { action: 'options' };
   }
   if (parsed.kind !== 'query') {
     await navigate(homeUrl(system), system, disposition, cache.settings);
     await remember({ systemKey: system.key, host: system.host, intent: 'Shell-home', alias: null, title: 'Launchpad home', url: homeUrl(system), input: text });
-    return;
+    return { action: 'home', url: homeUrl(system) };
   }
   const matches = rank(parsed, indexFor(cache, system), { limit: 1, guesser });
   const top = matches[0];
@@ -166,7 +170,7 @@ async function onInputEntered(text, disposition) {
     await navigate(url, system, disposition, cache.settings);
     await copyToClipboard(parsed.query);
     await remember({ systemKey: system.key, host: system.host, intent: 'Shell-appfinder', alias: null, title: `App Finder (unresolved "${parsed.query}")`, url, input: text, unresolved: parsed.query });
-    return;
+    return { action: 'appfinder', url };
   }
   const url = buildUrl(system, top.entry, top.param);
   await navigate(url, system, disposition, cache.settings);
@@ -174,6 +178,36 @@ async function onInputEntered(text, disposition) {
     systemKey: system.key, host: system.host, intent: top.entry.intent, alias: top.entry.alias, title: top.entry.title,
     url, input: text, param: top.param, matchType: top.type, guess: top.type === MATCH.TCODE_GUESS || top.entry.confidence === 'low',
   });
+  return { action: 'open', url };
+}
+
+const plainText = (s) => String(s).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+
+/** Structured resolution for the popup (no omnibox XML). */
+async function resolveForPopup(text) {
+  const cache = await getCache();
+  const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey });
+  const system = parsed.system ? { key: parsed.system.key, host: parsed.system.host, env: parsed.system.env, name: parsed.system.name } : null;
+  if (parsed.kind === 'systems') {
+    return { kind: 'systems', system, hint: 'Pick a system', matches: cache.systems.map((s) => ({ content: s.key, alias: s.key, title: s.name || s.host, intent: '', systemKey: s.key, tag: `${s.env} · ${s.host}` })) };
+  }
+  if (!system || parsed.kind !== 'query') return { kind: parsed.kind, system, hint: plainText(formatDefaultDescription(parsed)), matches: [] };
+  const matches = rank(parsed, indexFor(cache, parsed.system), { limit: 8, guesser });
+  return {
+    kind: 'query',
+    system,
+    hint: plainText(formatDefaultDescription(parsed, matches[0] ?? null)),
+    matches: matches.map((m) => ({
+      content: formatSuggestion(m, parsed.system).content,
+      alias: m.entry.alias ?? m.entry.intent,
+      title: m.entry.title,
+      intent: m.entry.intent,
+      param: m.param,
+      systemKey: parsed.system.key,
+      guess: m.type === MATCH.TCODE_GUESS || m.entry.confidence === 'low',
+      onTenant: Boolean(m.entry.discoveredOnTarget),
+    })),
+  };
 }
 
 async function remember(launch) {
@@ -304,6 +338,17 @@ async function handleMessage(msg, sender) {
       const cache = await getCache();
       const { indexByHost, ...snapshot } = cache;
       return { snapshot };
+    }
+    case MSG.RESOLVE:
+      return resolveForPopup(String(msg.text ?? ''));
+    case MSG.NAVIGATE:
+      return launch(String(msg.text ?? ''), msg.disposition || 'currentTab');
+    case MSG.OPEN_URL: {
+      const cache = await getCache();
+      const system = systemByHost(cache.systems, msg.host) || { host: '' };
+      if (!/^https:\/\//.test(String(msg.url))) return { error: 'bad url' };
+      await navigate(String(msg.url), system, msg.disposition || 'currentTab', cache.settings);
+      return { action: 'open', url: msg.url };
     }
     default:
       return { ignored: true };

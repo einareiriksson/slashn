@@ -123,13 +123,16 @@ function union(...lists) {
  * Discovered rows inherit tcodes / paramKey / appId from static rows with the same intent.
  * Once a tenant has been scanned, low-confidence static rows whose intent the tenant does not offer are dropped.
  */
+/** Identity of an entry in user/hidden lists: its alias, or "#intent" for alias-less rows. */
+export const entryKey = (e) => (e.alias ? lc(e.alias) : `#${lc(e.intent)}`);
+
 export function mergeEntries({ user = [], seed = [], hidden = [], discovered = [] } = {}) {
   const hiddenSet = new Set(hidden.map(lc));
   const discoveredIntents = new Set(discovered.map((d) => lc(normalizeEntry(d).intent)).filter(Boolean));
   const userEntries = user.map((e) => normalizeEntry({ ...e, source: 'user', discoveredOnTarget: false }));
   const staticEntries = seed
     .map((e) => normalizeEntry(e))
-    .filter((e) => e.intent && !(e.alias && hiddenSet.has(e.alias)))
+    .filter((e) => e.intent && !hiddenSet.has(entryKey(e)))
     .filter((e) => !(discoveredIntents.size && e.confidence === 'low' && !discoveredIntents.has(lc(e.intent))))
     .sort((a, b) => (SOURCE_RANK[b.source] ?? 0) - (SOURCE_RANK[a.source] ?? 0));
 

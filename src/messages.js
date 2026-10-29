@@ -17,7 +17,10 @@ export const MSG = Object.freeze({
   RESCAN_TAB: 'SAPQS_RESCAN_TAB',             // SW → isolated   {}
   RESCAN_HOST: 'SAPQS_RESCAN_HOST',           // options → SW    { host }          reply { status }
   COPY: 'SAPQS_COPY',                         // SW → offscreen  { text }          reply { ok }
-  GET_STATE: 'SAPQS_GET_STATE',               // options → SW    {}                reply { snapshot }
+  GET_STATE: 'SAPQS_GET_STATE',               // options/popup → SW {}             reply { snapshot }
+  RESOLVE: 'SAPQS_RESOLVE',                   // popup → SW      { text }          reply { kind, system, hint, matches }
+  NAVIGATE: 'SAPQS_NAVIGATE',                 // popup → SW      { text, disposition }
+  OPEN_URL: 'SAPQS_OPEN_URL',                 // popup → SW      { url, host, disposition }
 });
 
 export const LOG_PREFIX = '[SAPQS]';
