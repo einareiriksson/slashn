@@ -1,5 +1,8 @@
 // slashn — toolbar popup. Same launcher as the omnibox, driven through the service worker.
 import { MSG } from '../messages.js';
+import { createStorage, systemFromUrl, looksLikeLaunchpad, isDefaultHost, originPattern } from '../storage.js';
+
+const storage = createStorage();
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
@@ -8,6 +11,18 @@ const send = (msg) => chrome.runtime.sendMessage(msg).catch((e) => ({ error: Str
 let items = [];
 let selected = 0;
 let seq = 0;
+let contextHost = null; // host of the active tab when it is a registered system
+let tab = null;
+
+/** activeTab lets us ask the page itself whether it is a Fiori launchpad. */
+async function probeLaunchpad(tabId) {
+  try {
+    const [r] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: () => Boolean(window.sap && window.sap.ushell) });
+    return Boolean(r?.result);
+  } catch {
+    return false;
+  }
+}
 
 async function init() {
   $('#options').addEventListener('click', () => chrome.runtime.openOptionsPage());
@@ -18,21 +33,51 @@ async function init() {
 
   const state = await send({ type: MSG.GET_STATE });
   const snap = state?.snapshot || { systems: [], recent: [] };
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  let host = '';
-  try { host = tab?.url ? new URL(tab.url).hostname.toLowerCase() : ''; } catch { host = ''; }
-  const current = snap.systems.find((s) => s.host === host);
-  $('#current').innerHTML = current
-    ? `On <b>${esc(current.key)}</b> ${esc(current.name || '')}<span class="env ${esc(current.env)}">${esc(current.env)}</span>`
-    : snap.systems.length ? `<span class="muted">Not on a registered tenant · default: ${esc(snap.systems.find((s) => s.isDefault)?.key || snap.systems[0].key)}</span>` : '<span class="muted">No systems configured – open options</span>';
-  if (current) input.placeholder = `${current.key} alias [value]`;
+  [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  await describeTab(snap);
   renderRecent(snap.recent || []);
   resolve('');
 }
 
+async function describeTab(snap) {
+  const input = $('#q');
+  let host = '';
+  try { host = tab?.url ? new URL(tab.url).host.toLowerCase() : ''; } catch { host = ''; }
+  const current = snap.systems.find((s) => s.host === host);
+  contextHost = current ? current.host : null;
+  if (current) {
+    $('#current').innerHTML = `Searching <b>${esc(current.key)}</b> ${esc(current.name || '')}<span class="env ${esc(current.env)}">${esc(current.env)}</span>`;
+    input.placeholder = `alias [value] – or <system> alias for another system`;
+    return;
+  }
+  const isSap = tab?.url && /^https?:/.test(tab.url) && (looksLikeLaunchpad(tab.url) || await probeLaunchpad(tab.id));
+  if (isSap) {
+    $('#current').innerHTML = `SAP launchpad detected: <b>${esc(host)}</b> <button id="add-current" class="small">Add as system</button>`;
+    $('#add-current').addEventListener('click', () => addCurrent(snap).catch((e) => { $('#hint').textContent = 'Could not add: ' + (e.message || e); }));
+    return;
+  }
+  $('#current').innerHTML = snap.systems.length
+    ? `<span class="muted">Not on a registered tenant · default: ${esc(snap.systems.find((s) => s.isDefault)?.key || snap.systems[0].key)}</span>`
+    : '<span class="muted">No systems configured – paste a launchpad URL in options, or open one and click the icon</span>';
+}
+
+async function addCurrent(snap) {
+  const sys = systemFromUrl(tab.url, snap.systems);
+  if (!sys) throw new Error('unrecognised URL');
+  // permission request must start inside the click gesture
+  const access = isDefaultHost(sys.host) || !chrome.permissions?.request ? Promise.resolve(true) : chrome.permissions.request({ origins: [originPattern(sys)] }).catch(() => false);
+  const systems = [...(await storage.getSystems()), sys];
+  await storage.setSystems(systems);
+  const granted = await access;
+  const state = await send({ type: MSG.GET_STATE });
+  await describeTab(state?.snapshot || { systems, recent: [] });
+  $('#hint').textContent = granted ? `Added "${sys.key}" (${sys.host}); reload the tab once to start discovery` : `Added "${sys.key}" – site access not granted, discovery disabled until you grant it in options`;
+  resolve($('#q').value);
+}
+
 async function resolve(text) {
   const mySeq = ++seq;
-  const r = await send({ type: MSG.RESOLVE, text });
+  const r = await send({ type: MSG.RESOLVE, text, contextHost });
   if (mySeq !== seq || !r || r.error) return;
   items = r.matches || [];
   selected = 0;
@@ -82,7 +127,7 @@ function onKey(ev) {
 
 async function go(text, disposition) {
   // Empty input is meaningful: launchpad home on the default system, or the options page when nothing is configured.
-  const r = await send({ type: MSG.NAVIGATE, text: String(text ?? ''), disposition });
+  const r = await send({ type: MSG.NAVIGATE, text: String(text ?? ''), disposition, contextHost });
   if (r?.error) { $('#hint').textContent = r.error; return; }
   window.close();
 }

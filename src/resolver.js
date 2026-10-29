@@ -62,11 +62,12 @@ export function pickDefaultSystem(systems, lastUsedKey) {
  *   { kind:'query', system, systemExplicit:true, head:'me23n', rest:['4500001234'], query:'me23n 4500001234' }
  * kinds: 'empty' | 'systems' (input "?") | 'home' (system only) | 'query'
  */
-export function parseInput(text, systems, { lastUsedKey } = {}) {
+export function parseInput(text, systems, { lastUsedKey, preferredKey } = {}) {
   const raw = String(text ?? '');
   const tokens = tokenize(raw);
   const base = { raw, tokens, system: null, systemExplicit: false, head: null, rest: [], query: '' };
-  const fallback = pickDefaultSystem(systems, lastUsedKey);
+  // preferredKey = the system of the tab the user is looking at; it beats the configured default
+  const fallback = findSystem(systems, preferredKey) ?? pickDefaultSystem(systems, lastUsedKey);
   if (tokens.length === 0) return { ...base, kind: 'empty', system: fallback };
   if (SYSTEMS_WORDS.includes(tokens[0])) return { ...base, kind: 'systems', system: fallback };
   let system = findSystem(systems, tokens[0]);

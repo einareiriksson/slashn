@@ -22,7 +22,8 @@
     "offscreen",
     "clipboardWrite",
     "scripting",
-    "unlimitedStorage"
+    "unlimitedStorage",
+    "activeTab"
   ],
   "host_permissions": [
     "https://*.s4hana.cloud.sap/*"

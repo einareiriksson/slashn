@@ -48,6 +48,9 @@ test('parseInput: default and last-used fallback', () => {
   assert.equal(parseInput('me21n', noDefault).system.key, 'acd'); // first system
   assert.equal(parseInput('me21n', []).system, null);
   assert.equal(parseInput('me21n', []).kind, 'query');
+  assert.equal(parseInput('me21n', systems, { preferredKey: 'tst' }).system.key, 'tst'); // current tab beats default
+  assert.equal(parseInput('acd me21n', systems, { preferredKey: 'tst' }).system.key, 'acd'); // explicit key still wins
+  assert.equal(parseInput('me21n', systems, { preferredKey: 'nope' }).system.key, 'acd');
 });
 
 test('parseInput: system key collision with alias – system wins', () => {

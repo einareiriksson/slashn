@@ -45,7 +45,9 @@ Scans run when the launchpad loads on a registered host and the last scan is mis
 
 ## Toolbar popup
 
-Click the toolbar icon for the same launcher as a small panel: it shows the tenant of the active tab (if registered), an input that behaves like the omnibox (type, arrow keys, Enter; Ctrl/Cmd+Enter for a new tab), and the last ten launches.
+Click the toolbar icon for the same launcher as a small panel. It looks at the active tab: on a registered tenant, queries without a system key search that tenant; on an unregistered page that looks like a Fiori launchpad (SAP cloud host, `/sap/bc/ui2/flp` path, intent-style hash, or a page exposing `sap.ushell`) it offers **Add as system**, which derives the row from the URL and asks for site access on custom hosts. It also shows an input that behaves like the omnibox (type, arrow keys, Enter; Ctrl/Cmd+Enter for a new tab) and the last ten launches.
+
+The omnibox behaves the same way: while you are on a registered tenant's tab, `s me21n` opens the app there rather than on the default system. Prefix a system key to go elsewhere.
 
 ## On-premise and private cloud systems
 

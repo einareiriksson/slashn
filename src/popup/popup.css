@@ -25,3 +25,5 @@ h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: v
 .recent li .title { color: var(--muted); }
 .muted { color: var(--muted); }
 .empty { color: var(--muted); padding: 4px 8px; }
+.small { font: inherit; font-size: 11px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--chip); color: var(--fg); cursor: pointer; margin-left: 6px; }
+.small:hover { border-color: var(--accent); }

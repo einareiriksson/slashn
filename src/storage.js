@@ -63,6 +63,18 @@ export function parseLaunchpadUrl(input) {
   return { scheme: u.protocol === 'http:' ? 'http' : 'https', host, launchpadPath: path, launchpadQuery };
 }
 
+/** Heuristic: does this URL look like an SAP Fiori launchpad? (SAP cloud hosts, FLP paths, intent-style hashes, sap-client) */
+export function looksLikeLaunchpad(url) {
+  let u;
+  try { u = new URL(String(url)); } catch { return false; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+  if (/\.s4hana\.cloud\.sap$|\.s4hana\.ondemand\.com$/i.test(u.hostname)) return true;
+  if (/^\/sap\/bc\/ui2\/flp(\/|$)|^\/sap\/bc\/ui5_ui5\/ui2\/ushell\//i.test(u.pathname)) return true;
+  if (/^\/ui\/?$/.test(u.pathname) && /^#[A-Za-z0-9_]+-[A-Za-z0-9_]+/.test(u.hash)) return true;
+  if (u.searchParams.has('sap-client') && /^#[A-Za-z0-9_]+-[A-Za-z0-9_]+/.test(u.hash)) return true;
+  return false;
+}
+
 function guessEnv(host) {
   const labels = host.split(/[.-]/);
   const first = labels[0] || '';

@@ -235,3 +235,25 @@ test('suggestions respect the system edition', async () => {
   L.storageChanged({ systems: {} }, 'sync');
   await tick();
 });
+
+test('queries without a system key go to the current tab\'s system', async () => {
+  activeTab.url = 'https://my2.s4hana.cloud.sap/ui#Shell-home';
+  L.onInputStarted();
+  await tick();
+  assert.equal((await changed('me21n'))[0].content, 'tst me21n');
+  assert.equal((await changed('acd me21n'))[0].content, 'acd me21n'); // explicit key still wins
+  calls.length = 0;
+  L.onInputEntered('me23n 42', 'currentTab');
+  await tick(80);
+  assert.deepEqual(calls[0], ['update', 1, { url: 'https://my2.s4hana.cloud.sap/ui#PurchaseOrder-displayFactSheet?PurchaseOrder=42' }]);
+  L.onInputCancelled();
+  activeTab.url = 'https://my1.s4hana.cloud.sap/ui#Shell-home';
+  L.onInputStarted();
+  await tick();
+  assert.equal((await changed('me21n'))[0].content, 'acd me21n');
+  const r = await send({ type: MSG.RESOLVE, text: 'me21n', contextHost: 'my2.s4hana.cloud.sap' }, { id: 'ext' });
+  assert.equal(r.system.key, 'tst');
+  calls.length = 0;
+  await send({ type: MSG.NAVIGATE, text: 'me21n', disposition: 'newForegroundTab', contextHost: 'my2.s4hana.cloud.sap' }, { id: 'ext' });
+  assert.deepEqual(calls[0], ['create', { url: 'https://my2.s4hana.cloud.sap/ui#PurchaseOrder-create', active: true }]);
+});

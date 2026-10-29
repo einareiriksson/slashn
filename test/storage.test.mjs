@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  systemFromUrl, parseLaunchpadUrl, isDefaultHost, guessEdition,
+  systemFromUrl, parseLaunchpadUrl, isDefaultHost, guessEdition, looksLikeLaunchpad,
   chunkArray, byteSize, readChunked, writeChunked, migrateSnapshot, memoryArea, createStorage, buildSeedEntries, validateSystems, normalizeSystem, SCHEMA_VERSION, KEYS,
 } from '../src/storage.js';
 
@@ -147,4 +147,16 @@ test('systemFromUrl builds a row from a pasted URL', () => {
   assert.deepEqual(parseLaunchpadUrl('https://a.b.c/'), { scheme: 'https', host: 'a.b.c', launchpadPath: '/ui', launchpadQuery: '' });
   assert.equal(isDefaultHost('my1.s4hana.cloud.sap'), true);
   assert.equal(isDefaultHost('acd.finteq.io'), false);
+});
+
+test('looksLikeLaunchpad heuristics', () => {
+  assert.equal(looksLikeLaunchpad('https://my419228.s4hana.cloud.sap/ui#Shell-home'), true);
+  assert.equal(looksLikeLaunchpad('https://my419228.s4hana.cloud.sap/'), true);
+  assert.equal(looksLikeLaunchpad('https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#Shell-home'), true);
+  assert.equal(looksLikeLaunchpad('https://acd.finteq.io/ui#PurchaseOrder-manage'), true);
+  assert.equal(looksLikeLaunchpad('https://acd.finteq.io/ui'), false); // too generic without an intent hash
+  assert.equal(looksLikeLaunchpad('https://erp.example/portal?sap-client=100#SalesOrder-manage'), true);
+  assert.equal(looksLikeLaunchpad('https://www.google.com/'), false);
+  assert.equal(looksLikeLaunchpad('chrome://extensions'), false);
+  assert.equal(looksLikeLaunchpad('nonsense'), false);
 });

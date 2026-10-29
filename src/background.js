@@ -15,6 +15,7 @@ const warn = (...args) => console.warn(LOG_PREFIX, ...args);
 
 let cachePromise = null;
 let latestInput = null;
+let contextKey = null; // system key of the tab the omnibox session started on
 
 // ---------------------------------------------------------------- listeners (must be registered synchronously)
 
@@ -26,9 +27,11 @@ chrome.runtime.onStartup?.addListener(() => {
   syncContentScripts().catch((e) => warn('content script sync failed', e));
 });
 chrome.omnibox.onInputStarted.addListener(() => {
-  getCache().then((cache) => {
+  contextKey = null;
+  Promise.all([getCache(), activeTabHost()]).then(([cache, host]) => {
+    contextKey = systemByHost(cache.systems, host)?.key ?? null;
     // Show help before the first keystroke: launchpad target, or "no systems" guidance.
-    const parsed = parseInput('', cache.systems, { lastUsedKey: cache.lastUsedKey });
+    const parsed = parseInput('', cache.systems, { lastUsedKey: cache.lastUsedKey, preferredKey: contextKey });
     setDefault(parsed.system ? `${formatDefaultDescription(parsed)} – type an alias, or "list" for systems` : formatDefaultDescription(parsed));
   }).catch((e) => warn('cache warm-up failed', e));
 });
@@ -38,7 +41,7 @@ chrome.omnibox.onInputChanged.addListener((text, suggest) => {
 chrome.omnibox.onInputEntered.addListener((text, disposition) => {
   onInputEntered(text, disposition).catch((e) => warn('onInputEntered failed', e));
 });
-chrome.omnibox.onInputCancelled.addListener(() => { latestInput = null; });
+chrome.omnibox.onInputCancelled.addListener(() => { latestInput = null; contextKey = null; });
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string' || msg.type === MSG.COPY) return false; // COPY is for the offscreen page
   handleMessage(msg, sender).then(sendResponse, (e) => sendResponse({ error: String(e?.message || e) }));
@@ -141,6 +144,16 @@ function systemByHost(systems, host) {
   return systems.find((s) => s.host === h) ?? null;
 }
 
+/** Host (with port) of the active tab; undefined when the extension may not see that tab's URL. */
+async function activeTabHost() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    return tab?.url ? new URL(tab.url).host.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------- omnibox
 
 function setDefault(description) {
@@ -155,7 +168,7 @@ async function onInputChanged(text, suggest) {
   latestInput = text;
   const cache = await getCache();
   if (latestInput !== text) return; // stale
-  const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey });
+  const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey, preferredKey: contextKey });
   try {
     if (parsed.kind === 'systems') {
       setDefault(formatDefaultDescription(parsed));
@@ -192,9 +205,9 @@ async function onInputEntered(text, disposition) {
   return launch(text, disposition);
 }
 
-async function launch(text, disposition) {
+async function launch(text, disposition, preferredKey = contextKey) {
   const cache = await getCache();
-  const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey });
+  const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey, preferredKey });
   const system = parsed.system;
   if (parsed.kind === 'systems' || !system) {
     await chrome.runtime.openOptionsPage();
@@ -226,9 +239,10 @@ async function launch(text, disposition) {
 const plainText = (s) => String(s).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
 /** Structured resolution for the popup (no omnibox XML). */
-async function resolveForPopup(text) {
+async function resolveForPopup(text, contextHost = null) {
   const cache = await getCache();
-  const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey });
+  const preferredKey = systemByHost(cache.systems, contextHost)?.key ?? null;
+  const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey, preferredKey });
   const system = parsed.system ? { key: parsed.system.key, host: parsed.system.host, env: parsed.system.env, name: parsed.system.name } : null;
   if (parsed.kind === 'systems') {
     return { kind: 'systems', system, hint: 'Pick a system', matches: cache.systems.map((s) => ({ content: s.key, alias: s.key, title: s.name || s.host, intent: '', systemKey: s.key, tag: `${s.env} · ${s.host}` })) };
@@ -382,9 +396,11 @@ async function handleMessage(msg, sender) {
       return { snapshot };
     }
     case MSG.RESOLVE:
-      return resolveForPopup(String(msg.text ?? ''));
-    case MSG.NAVIGATE:
-      return launch(String(msg.text ?? ''), msg.disposition || 'currentTab');
+      return resolveForPopup(String(msg.text ?? ''), msg.contextHost || null);
+    case MSG.NAVIGATE: {
+      const cache = await getCache();
+      return launch(String(msg.text ?? ''), msg.disposition || 'currentTab', systemByHost(cache.systems, msg.contextHost)?.key ?? null);
+    }
     case MSG.OPEN_URL: {
       const cache = await getCache();
       const system = systemByHost(cache.systems, msg.host) || { host: '' };
