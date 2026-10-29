@@ -1,5 +1,5 @@
 // slashn — options page.
-import { createStorage, validateSystems, normalizeSystem, ENVS, ALIAS_RE } from '../storage.js';
+import { createStorage, validateSystems, normalizeSystem, systemFromUrl, isDefaultHost, originPattern, ENVS, ALIAS_RE } from '../storage.js';
 import { mergeEntries, normalizeEntry, homeUrl, splitIntent, entryKey } from '../resolver.js';
 import { aliasesFromCsv, aliasesToCsv } from '../csv.js';
 import { MSG } from '../messages.js';
@@ -11,7 +11,7 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const INTENT_RE = /^[A-Za-z0-9_]+-[A-Za-z0-9_]+$/;
 
 let snap = null;
-const ui = { tab: 'systems', sub: 'aliases', advanced: false, discHost: null, rescanStatus: {} };
+const ui = { tab: 'systems', sub: 'aliases', advanced: false, discHost: null, rescanStatus: {}, access: {} };
 let draftSystems = null; // unsaved rows while the user fills them in
 
 // ---------------------------------------------------------------- helpers
@@ -98,8 +98,35 @@ async function deleteEntry(entry) {
 
 // ---------------------------------------------------------------- rendering
 
+async function refreshAccess() {
+  ui.access = {};
+  if (!chrome.permissions?.contains) return;
+  await Promise.all(snap.systems.filter((s) => !isDefaultHost(s.host)).map(async (s) => {
+    try { ui.access[s.host] = await chrome.permissions.contains({ origins: [originPattern(s.host)] }); } catch { ui.access[s.host] = false; }
+  }));
+}
+
+/** Must be called synchronously inside a user-gesture handler (paste, click, submit). */
+function requestAccess(host) {
+  if (isDefaultHost(host) || !chrome.permissions?.request) return Promise.resolve(true);
+  return chrome.permissions.request({ origins: [originPattern(host)] }).catch(() => false);
+}
+
+async function addFromUrl(text) {
+  const sys = systemFromUrl(text, snap.systems);
+  if (!sys) { toast('That does not look like a launchpad URL'); return; }
+  if (snap.systems.some((s) => s.host === sys.host)) { toast(`${sys.host} is already registered as "${snap.systems.find((s) => s.host === sys.host).key}"`); return; }
+  const access = requestAccess(sys.host); // started inside the gesture
+  draftSystems = null;
+  await storage.setSystems([...snap.systems, sys]);
+  const granted = await access;
+  toast(granted ? `Added "${sys.key}" (${sys.host})` : `Added "${sys.key}" – grant site access to enable discovery on ${sys.host}`, 3500);
+  $('#add-url-input').value = '';
+}
+
 async function refresh() {
   snap = await storage.loadSnapshot();
+  await refreshAccess();
   if (!ui.discHost || !snap.systems.some((s) => s.host === ui.discHost)) ui.discHost = snap.systems[0]?.host ?? null;
   render();
 }
@@ -136,7 +163,7 @@ function renderSystems() {
       ${adv ? `<td><input data-field="launchpadPath" value="${esc(s.launchpadPath)}" class="cell-sm"></td>` : ''}
       <td><select data-field="env">${ENVS.map((e) => `<option ${e === s.env ? 'selected' : ''}>${e}</option>`).join('')}</select></td>
       <td><input type="radio" name="isDefault" data-field="isDefault" ${s.isDefault ? 'checked' : ''}></td>
-      <td class="muted">${meta?.lastScanned ? esc(new Date(meta.lastScanned).toLocaleString()) : '–'}${status}</td>
+      <td class="muted">${meta?.lastScanned ? esc(new Date(meta.lastScanned).toLocaleString()) : '–'}${status}${!isDefaultHost(s.host) && s.host && ui.access[s.host] === false ? ` <button class="small" data-action="grant-access" data-host="${esc(s.host)}" title="Needed for discovery and tab reuse on custom hosts">Grant site access</button>` : ''}</td>
       <td class="muted">${meta ? esc(meta.appCount) : '–'}</td>
       <td class="actions">
         <button class="small" data-action="open-launchpad" data-host="${esc(s.host)}">Open launchpad</button>
@@ -341,6 +368,13 @@ document.addEventListener('click', async (ev) => {
         toast('System deleted');
         break;
       }
+      case 'grant-access': {
+        const granted = await requestAccess(btn.dataset.host);
+        ui.access[btn.dataset.host] = granted;
+        renderSystems();
+        toast(granted ? `Access granted for ${btn.dataset.host}` : 'Access not granted');
+        break;
+      }
       case 'open-launchpad': {
         const system = snap.systems.find((s) => s.host === btn.dataset.host);
         if (system) chrome.tabs.create({ url: homeUrl(system) });
@@ -462,6 +496,17 @@ document.addEventListener('input', debounce((ev) => {
   if (id === 'tcode-filter') renderTcodes();
   if (id === 'disc-filter') renderDiscovered();
 }, 120));
+
+$('#add-url').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  addFromUrl($('#add-url-input').value).catch((e) => toast(String(e.message || e), 4000));
+});
+$('#add-url-input').addEventListener('paste', (ev) => {
+  const text = (ev.clipboardData || window.clipboardData)?.getData('text') || '';
+  if (!/^\s*(https?:\/\/)?[a-z0-9.-]+\.[a-z]{2,}/i.test(text)) return;
+  ev.preventDefault();
+  addFromUrl(text).catch((e) => toast(String(e.message || e), 4000));
+});
 
 $('#alias-add').addEventListener('submit', async (ev) => {
   ev.preventDefault();

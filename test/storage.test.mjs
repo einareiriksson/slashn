@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  systemFromUrl, parseLaunchpadUrl, isDefaultHost,
   chunkArray, byteSize, readChunked, writeChunked, migrateSnapshot, memoryArea, createStorage, buildSeedEntries, validateSystems, normalizeSystem, SCHEMA_VERSION, KEYS,
 } from '../src/storage.js';
 
@@ -108,4 +109,25 @@ test('buildSeedEntries merges aliases, library and tcodes; applySeed respects ve
   await s.setUserAliases([{ alias: 'mine', semanticObject: 'X', action: 'y', title: 'Mine' }]);
   await s.applySeed({ aliasesCsv, libraryCsv, tcodesCsv, version: '2' });
   assert.equal((await s.getUserAliases()).length, 1); // seed never touches user rows
+});
+
+test('systemFromUrl builds a row from a pasted URL', () => {
+  const a = systemFromUrl('https://my419228.s4hana.cloud.sap', []);
+  assert.deepEqual(a, { key: 'my419228', name: 'my419228.s4hana.cloud.sap', customer: '', host: 'my419228.s4hana.cloud.sap', launchpadPath: '/ui', env: 'TST', isDefault: true });
+  const b = systemFromUrl('https://acd.finteq.io/ui#Shell-home', [a]);
+  assert.equal(b.key, 'acd');
+  assert.equal(b.customer, 'finteq');
+  assert.equal(b.host, 'acd.finteq.io');
+  assert.equal(b.launchpadPath, '/ui');
+  assert.equal(b.isDefault, false);
+  assert.equal(systemFromUrl('MY419228.s4hana.cloud.sap/sap/bc/ui2/flp?x=1#Shell-home', []).launchpadPath, '/sap/bc/ui2/flp');
+  assert.equal(systemFromUrl('https://dev.customer.example', []).env, 'DEV');
+  assert.equal(systemFromUrl('https://prd-erp.customer.example', []).env, 'PRD');
+  assert.equal(systemFromUrl('https://acd.finteq.io', [{ key: 'acd' }, { key: 'acd2' }]).key, 'acd3');
+  assert.equal(systemFromUrl('not a url', []), null);
+  assert.equal(systemFromUrl('ftp://x.y', []), null);
+  assert.equal(systemFromUrl('localhost', []), null);
+  assert.deepEqual(parseLaunchpadUrl('https://a.b.c/'), { host: 'a.b.c', launchpadPath: '/ui' });
+  assert.equal(isDefaultHost('my1.s4hana.cloud.sap'), true);
+  assert.equal(isDefaultHost('acd.finteq.io'), false);
 });

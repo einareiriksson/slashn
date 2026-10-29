@@ -1,7 +1,7 @@
 // slashn — MV3 service worker.
 // Omnibox handling, alias resolution, navigation, seed loading, discovery bookkeeping, rescan orchestration.
 import { MSG, LOG_PREFIX } from './messages.js';
-import { createStorage } from './storage.js';
+import { createStorage, isDefaultHost, originPattern } from './storage.js';
 import {
   parseInput, mergeEntries, buildIndex, rank, buildUrl, homeUrl, appFinderUrl, isOnHost,
   formatSuggestion, formatSystemSuggestion, formatDefaultDescription, MATCH,
@@ -23,6 +23,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 chrome.runtime.onStartup?.addListener(() => {
   ensureSeed({ force: false }).catch((e) => warn('seed check failed', e));
+  syncContentScripts().catch((e) => warn('content script sync failed', e));
 });
 chrome.omnibox.onInputStarted.addListener(() => {
   getCache().then((cache) => {
@@ -43,7 +44,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   handleMessage(msg, sender).then(sendResponse, (e) => sendResponse({ error: String(e?.message || e) }));
   return true;
 });
-chrome.storage.onChanged.addListener(() => { cachePromise = null; });
+chrome.storage.onChanged.addListener((changes, area) => {
+  cachePromise = null;
+  if (area === 'sync' && changes.systems) syncContentScripts().catch((e) => warn('content script sync failed', e));
+});
+chrome.permissions?.onAdded?.addListener(() => syncContentScripts().catch((e) => warn('content script sync failed', e)));
+chrome.permissions?.onRemoved?.addListener(() => syncContentScripts().catch((e) => warn('content script sync failed', e)));
 
 log('service worker ready');
 
@@ -53,6 +59,37 @@ async function onInstalled(details) {
   log('onInstalled', details.reason);
   await storage.migrate();
   await ensureSeed({ force: true });
+  await syncContentScripts();
+}
+
+/**
+ * Hosts outside *.s4hana.cloud.sap are not covered by the manifest. For each such system whose origin the user
+ * granted, register the two content scripts dynamically; unregister scripts for systems that were removed.
+ */
+async function syncContentScripts() {
+  if (!chrome.scripting?.registerContentScripts || !chrome.permissions?.contains) return { registered: [], removed: [] };
+  const systems = await storage.getSystems();
+  const wanted = new Map();
+  for (const sys of systems) {
+    if (isDefaultHost(sys.host)) continue;
+    const origin = originPattern(sys.host);
+    let granted = false;
+    try { granted = await chrome.permissions.contains({ origins: [origin] }); } catch { granted = false; }
+    if (granted) wanted.set(sys.host, origin);
+  }
+  const existing = (await chrome.scripting.getRegisteredContentScripts()).filter((s) => s.id.startsWith('sapqs-'));
+  const hostOf = (id) => id.replace(/^sapqs-(main|iso)-/, '');
+  const removed = existing.filter((s) => !wanted.has(hostOf(s.id))).map((s) => s.id);
+  if (removed.length) await chrome.scripting.unregisterContentScripts({ ids: removed });
+  const have = new Set(existing.map((s) => s.id));
+  const toAdd = [];
+  for (const [host, origin] of wanted) {
+    if (!have.has(`sapqs-main-${host}`)) toAdd.push({ id: `sapqs-main-${host}`, matches: [origin], js: ['src/content-main.js'], world: 'MAIN', runAt: 'document_start', persistAcrossSessions: true });
+    if (!have.has(`sapqs-iso-${host}`)) toAdd.push({ id: `sapqs-iso-${host}`, matches: [origin], js: ['src/content-isolated.js'], runAt: 'document_idle', persistAcrossSessions: true });
+  }
+  if (toAdd.length) await chrome.scripting.registerContentScripts(toAdd);
+  if (toAdd.length || removed.length) log('content scripts synced', { registered: toAdd.map((s) => s.id), removed });
+  return { registered: toAdd.map((s) => s.id), removed };
 }
 
 async function ensureSeed({ force }) {

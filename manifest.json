@@ -20,7 +20,8 @@
   "permissions": [
     "storage",
     "offscreen",
-    "clipboardWrite"
+    "clipboardWrite",
+    "scripting"
   ],
   "host_permissions": [
     "https://*.s4hana.cloud.sap/*"
@@ -57,5 +58,8 @@
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"
     }
-  }
+  },
+  "optional_host_permissions": [
+    "https://*/*"
+  ]
 }

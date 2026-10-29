@@ -32,6 +32,47 @@ export const ENVS = Object.freeze(['DEV', 'TST', 'PRD']);
 export const HOST_RE = /^[a-z0-9.-]+$/;
 export const KEY_RE = /^[a-z0-9][a-z0-9_-]*$/;
 export const ALIAS_RE = /^[a-z0-9][a-z0-9_./-]*$/;
+export const DEFAULT_HOST_SUFFIX = '.s4hana.cloud.sap';
+/** Hosts covered by the static manifest permissions; anything else needs a runtime grant + dynamic content scripts. */
+export const isDefaultHost = (host) => String(host || '').toLowerCase().endsWith(DEFAULT_HOST_SUFFIX);
+export const originPattern = (host) => `https://${String(host).toLowerCase()}/*`;
+
+/** parseLaunchpadUrl("https://acd.finteq.io/ui#Shell-home") → { host:'acd.finteq.io', launchpadPath:'/ui' } | null */
+export function parseLaunchpadUrl(input) {
+  let text = String(input ?? '').trim();
+  if (!text) return null;
+  if (!/^[a-z]+:\/\//i.test(text)) text = 'https://' + text;
+  let u;
+  try { u = new URL(text); } catch { return null; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+  const host = u.hostname.toLowerCase();
+  if (!HOST_RE.test(host) || !host.includes('.')) return null;
+  let path = u.pathname.replace(/\/+$/, '');
+  if (!path || path === '/') path = DEFAULT_LAUNCHPAD_PATH;
+  return { host, launchpadPath: path };
+}
+
+function guessEnv(host) {
+  const labels = host.split(/[.-]/);
+  const first = labels[0] || '';
+  if (/^(dev|develop|development|sbx|sandbox|d\d*)$/.test(first) || /(^|[.-])(dev|sandbox|sbx)([.-]|$)/.test(host)) return 'DEV';
+  if (/^(prd|prod|production|p\d*)$/.test(first) || /(^|[.-])(prd|prod|production)([.-]|$)/.test(host)) return 'PRD';
+  return 'TST';
+}
+
+/** Builds a system row from a pasted URL; key is the first host label, made unique against `existing`. */
+export function systemFromUrl(input, existing = []) {
+  const parsed = parseLaunchpadUrl(input);
+  if (!parsed) return null;
+  const { host, launchpadPath } = parsed;
+  const labels = host.split('.');
+  const base = (labels[0] || 'sys').toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[^a-z0-9]+/, '') || 'sys';
+  const keys = new Set((existing || []).map((s) => String(s.key).toLowerCase()));
+  let key = base;
+  for (let n = 2; keys.has(key); n++) key = `${base}${n}`;
+  const customer = isDefaultHost(host) ? '' : (labels.length >= 3 ? labels[labels.length - 2] : '');
+  return normalizeSystem({ key, name: host, customer, host, launchpadPath, env: guessEnv(host), isDefault: !(existing || []).some((s) => s.isDefault) });
+}
 
 // ---------------------------------------------------------------- pure helpers
 

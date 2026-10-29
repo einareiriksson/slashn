@@ -49,6 +49,18 @@ globalThis.chrome = {
     createDocument: async (o) => { calls.push(['offscreen', o.reasons]); },
     closeDocument: async () => {},
   },
+  permissions: {
+    granted: new Set(),
+    contains: async ({ origins }) => origins.every((o) => chrome.permissions.granted.has(o)),
+    onAdded: listener('permAdded'),
+    onRemoved: listener('permRemoved'),
+  },
+  scripting: {
+    registered: [],
+    getRegisteredContentScripts: async () => chrome.scripting.registered.slice(),
+    registerContentScripts: async (list) => { chrome.scripting.registered.push(...list); },
+    unregisterContentScripts: async ({ ids }) => { chrome.scripting.registered = chrome.scripting.registered.filter((s) => !ids.includes(s.id)); },
+  },
 };
 globalThis.fetch = async (u) => {
   const p = url.fileURLToPath(u);
@@ -178,4 +190,28 @@ test('popup messages: resolve, navigate, open url', async () => {
   calls.length = 0;
   assert.equal((await send({ type: MSG.NAVIGATE, text: 'list', disposition: 'currentTab' }, { id: 'ext' })).action, 'options');
   assert.deepEqual(calls[0], ['options']);
+});
+
+test('custom hosts get dynamic content scripts once access is granted', async () => {
+  const systems = (await sync.get('systems')).systems;
+  await sync.set({ systems: [...systems, { key: 'fin', name: 'Finteq', customer: 'finteq', host: 'acd.finteq.io', launchpadPath: '/ui', env: 'TST', isDefault: false }] });
+  L.storageChanged({ systems: {} }, 'sync');
+  await tick();
+  assert.deepEqual(chrome.scripting.registered, []); // no permission yet
+  chrome.permissions.granted.add('https://acd.finteq.io/*');
+  L.permAdded();
+  await tick();
+  assert.deepEqual(chrome.scripting.registered.map((s) => [s.id, s.world || 'ISOLATED', s.matches[0]]), [
+    ['sapqs-main-acd.finteq.io', 'MAIN', 'https://acd.finteq.io/*'],
+    ['sapqs-iso-acd.finteq.io', 'ISOLATED', 'https://acd.finteq.io/*'],
+  ]);
+  L.permAdded();
+  await tick();
+  assert.equal(chrome.scripting.registered.length, 2); // idempotent
+  const r = await send({ type: MSG.PAGE_READY, host: 'acd.finteq.io' });
+  assert.equal(r.scan, true);
+  await sync.set({ systems });
+  L.storageChanged({ systems: {} }, 'sync');
+  await tick();
+  assert.deepEqual(chrome.scripting.registered, []);
 });

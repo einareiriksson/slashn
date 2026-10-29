@@ -9,6 +9,9 @@
   const MAX_ENTRIES = 5000;
   const log = (...a) => console.debug(LOG, ...a);
 
+  if (window.__sapqsIsoLoaded) return;
+  window.__sapqsIsoLoaded = true;
+
   let wantScan = false;
   let mainReady = false;
 

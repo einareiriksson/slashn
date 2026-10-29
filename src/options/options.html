@@ -18,8 +18,13 @@
 
   <main>
     <section id="tab-systems" class="panel" hidden>
+      <form id="add-url" class="toolbar">
+        <input type="text" name="url" id="add-url-input" placeholder="Paste a launchpad URL to add a system, e.g. https://my123456.s4hana.cloud.sap" size="64" autocomplete="off">
+        <button type="submit">Add from URL</button>
+        <span class="hint">Pasting adds immediately. Hosts outside *.s4hana.cloud.sap ask for site access once.</span>
+      </form>
       <div class="toolbar">
-        <button data-action="add-system">Add system</button>
+        <button data-action="add-system">Add system manually</button>
         <label class="inline"><input type="checkbox" data-action="toggle-advanced"> Show launchpad path</label>
         <span class="spacer"></span>
         <button data-action="export-json">Export config (JSON)</button>
