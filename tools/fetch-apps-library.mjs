@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 // Builds src/seed/library.csv from the SAP Fiori Apps Reference Library.
 //
-//   node tools/fetch-apps-library.mjs                     # fetch Public Cloud apps from the library's OData service
+//   node tools/fetch-apps-library.mjs                     # fetch all S/4HANA apps (Public Cloud, Private Cloud, On-Premise)
 //   node tools/fetch-apps-library.mjs --from export.csv   # parse a manual "Export to CSV" from the library UI instead
 //   options: --out <file> (default src/seed/library.csv)  --dry-run  --page <n> (default 1000)
 //            --filter "<OData $filter>"  --endpoint <url>
 //
 // The OData service is undocumented (it is what the library UI itself calls). If its shape changes this script
 // exits non-zero with a message; fall back to the UI's List view → select all → Export to CSV and use --from.
-// It yields intent, app ID and title only; transaction codes are not exposed and come from src/seed/tcodes.csv.
+// It yields intent, app ID, title and the editions each app exists in (public | private;onprem, from the library's
+// release groups). Transaction codes are not exposed and come from src/seed/tcodes.csv.
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 import { parseObjects, serializeCsv, ALIAS_COLUMNS } from '../src/csv.js';
 
 const DEFAULT_ENDPOINT = 'https://fioriappslibrary.hana.ondemand.com/sap/fix/externalViewer/services/SingleApp.xsodata';
-const DEFAULT_FILTER = "substringof('Public Cloud',releaseGroupTextCombined)";
-const SELECT = 'appId,AppName,IntentsCombined,ApplicationType,releaseId';
+const DEFAULT_FILTER = ''; // all apps; e.g. --filter "substringof('Public Cloud',releaseGroupTextCombined)" for Public Cloud only
+const SELECT = 'appId,AppName,IntentsCombined,ApplicationType,releaseId,releaseGroupTextCombined';
 const INTENT_RE = /^([A-Za-z0-9_]+)-([A-Za-z0-9_]+)$/;
 
 const args = process.argv.slice(2);
@@ -48,7 +49,7 @@ async function fetchJson(u) {
 
 async function fetchFromLibrary() {
   const base = `${endpoint}/InputFilterParam(InpFilterValue='')/Results`;
-  const q = (extra) => `${base}?$format=json&$select=${encodeURIComponent(SELECT)}&$filter=${encodeURIComponent(filter)}&${extra}`;
+  const q = (extra) => `${base}?$format=json&$select=${encodeURIComponent(SELECT)}${filter ? `&$filter=${encodeURIComponent(filter)}` : ''}&${extra}`;
   const first = await fetchJson(q(`$inlinecount=allpages&$top=${pageSize}`));
   const results = first && first.d && first.d.results;
   if (!Array.isArray(results)) fail('unexpected response shape (no d.results) – the library service may have changed');
@@ -63,7 +64,16 @@ async function fetchFromLibrary() {
     rows.push(...r);
     console.error(`  ${rows.length}/${total}`);
   }
-  return rows.map((r) => ({ appId: r.appId, title: r.AppName, intents: splitIntents(r.IntentsCombined), type: r.ApplicationType }));
+  return rows.map((r) => ({ appId: r.appId, title: r.AppName, intents: splitIntents(r.IntentsCombined), type: r.ApplicationType, editions: editionsFromGroups(r.releaseGroupTextCombined) }));
+}
+
+/** "$SAP S/4HANA (Private Cloud and On-Premise)$ * $SAP S/4HANA Public Cloud$" → "private;onprem;public" */
+export function editionsFromGroups(combined) {
+  const g = String(combined || '');
+  const out = [];
+  if (/Private Cloud and On-Premise/i.test(g)) out.push('private', 'onprem');
+  if (/Public Cloud/i.test(g)) out.push('public');
+  return out.join(';');
 }
 
 // Column names in the library UI's CSV export vary; match loosely.
@@ -74,6 +84,7 @@ const COLUMN_MAP = {
   semanticObject: ['semantic object', 'semanticobject'],
   action: ['semantic action', 'action'],
   tcodes: ['transaction code', 'transaction codes', 'tcode', 'tcodes', 'transactioncodes'],
+  groups: ['release group', 'product', 'product version', 'editions'],
 };
 function readManualExport(file) {
   const text = fs.readFileSync(file, 'utf8');
@@ -85,7 +96,7 @@ function readManualExport(file) {
   if (!col.appId || !(col.intent || (col.semanticObject && col.action))) fail(`export is missing app id / intent columns; found: ${keys.join(', ')}`);
   return objects.map((o) => {
     const intents = col.intent ? splitIntents(o[col.intent]) : [`${o[col.semanticObject]}-${o[col.action]}`].filter((s) => INTENT_RE.test(s));
-    return { appId: o[col.appId], title: col.title ? o[col.title] : '', intents, tcodes: col.tcodes ? o[col.tcodes] : '' };
+    return { appId: o[col.appId], title: col.title ? o[col.title] : '', intents, tcodes: col.tcodes ? o[col.tcodes] : '', editions: col.groups ? editionsFromGroups(o[col.groups]) : '' };
   });
 }
 
@@ -103,6 +114,7 @@ function toRows(apps) {
   for (const app of apps) {
     const appId = String(app.appId || '').trim();
     if (!appId || !app.intents.length) continue;
+    if (!from && !app.editions) continue; // library rows for other products (ERP, BW/4HANA, …), not S/4HANA
     const base = aliasFromAppId(appId);
     if (!base) continue;
     [...app.intents].sort((a, b) => intentRank(a) - intentRank(b)).forEach((intent, i) => {
@@ -114,7 +126,7 @@ function toRows(apps) {
       usedAliases.add(alias);
       const [, semanticObject, action] = INTENT_RE.exec(intent);
       const tcodes = String(app.tcodes || '').split(/[,;]+/).map((t) => t.trim().toLowerCase()).filter(Boolean).join(';');
-      out.push([alias, semanticObject, action, appId, tcodes, String(app.title || '').trim(), '']);
+      out.push([alias, semanticObject, action, appId, tcodes, String(app.title || '').trim(), '', app.editions || '']);
     });
   }
   out.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));

@@ -231,3 +231,18 @@ test('mergeEntries: alias-less rows are hidden by "#intent" tombstones', () => {
   assert.equal(mergeEntries({ seed, hidden: ['#salescontract-manage'] }).length, 1);
   assert.equal(mergeEntries({ seed, hidden: ['po'] })[0].intent, 'SalesContract-manage');
 });
+
+test('mergeEntries: edition filter keeps untagged rows and drops rows for other editions', () => {
+  const seed = [
+    { alias: 'pub', semanticObject: 'A', action: 'x', title: 'public only', editions: ['public'] },
+    { alias: 'op', semanticObject: 'B', action: 'x', title: 'private/onprem', editions: 'private;onprem' },
+    { alias: 'all', semanticObject: 'C', action: 'x', title: 'everywhere' },
+    { alias: 'junk', semanticObject: 'D', action: 'x', title: 'bad tag ignored', editions: ['mars'] },
+  ];
+  const keys = (edition) => mergeEntries({ seed, edition }).map((e) => e.alias).sort();
+  assert.deepEqual(keys('public'), ['all', 'junk', 'pub']);
+  assert.deepEqual(keys('onprem'), ['all', 'junk', 'op']);
+  assert.deepEqual(keys('private'), ['all', 'junk', 'op']);
+  assert.deepEqual(keys(null), ['all', 'junk', 'op', 'pub']);
+  assert.deepEqual(mergeEntries({ user: [{ alias: 'mine', intent: 'A-x', title: 'm', editions: ['onprem'] }], edition: 'public' }).map((e) => e.alias), ['mine']); // user rows always apply
+});

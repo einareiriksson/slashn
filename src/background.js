@@ -129,6 +129,7 @@ function indexFor(cache, system) {
       seed: [...cache.seedAliases, ...(cache.importedAliases || [])],
       hidden: cache.hiddenAliases,
       discovered: cache.discovered?.[host]?.entries || [],
+      edition: system.edition || null,
     });
     cache.indexByHost.set(host, buildIndex(entries));
   }

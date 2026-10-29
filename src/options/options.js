@@ -1,6 +1,6 @@
 // slashn — options page.
-import { createStorage, validateSystems, normalizeSystem, systemFromUrl, isDefaultHost, originPattern, ENVS, ALIAS_RE } from '../storage.js';
-import { mergeEntries, normalizeEntry, homeUrl, splitIntent, entryKey } from '../resolver.js';
+import { createStorage, validateSystems, normalizeSystem, systemFromUrl, isDefaultHost, originPattern, ENVS, EDITIONS, EDITION_LABELS, ALIAS_RE } from '../storage.js';
+import { mergeEntries, normalizeEntry, homeUrl, splitIntent, entryKey, appliesToEdition } from '../resolver.js';
 import { aliasesFromCsv, aliasesToCsv } from '../csv.js';
 import { MSG } from '../messages.js';
 
@@ -62,7 +62,7 @@ function debounce(fn, ms) {
 }
 
 const staticEntries = () => mergeEntries({ user: snap.userAliases, seed: [...snap.seedAliases, ...snap.importedAliases], hidden: snap.hiddenAliases });
-const entriesForHost = (host) => mergeEntries({ user: snap.userAliases, seed: [...snap.seedAliases, ...snap.importedAliases], hidden: snap.hiddenAliases, discovered: snap.discovered?.[host]?.entries || [] });
+const entriesForHost = (host) => mergeEntries({ user: snap.userAliases, seed: [...snap.seedAliases, ...snap.importedAliases], hidden: snap.hiddenAliases, discovered: snap.discovered?.[host]?.entries || [], edition: snap.systems.find((s) => s.host === host)?.edition || null });
 
 // ---------------------------------------------------------------- data mutations
 
@@ -162,6 +162,7 @@ function renderSystems() {
       <td><input data-field="host" value="${esc(s.host)}" placeholder="my123456.s4hana.cloud.sap or host:8443" size="28"></td>
       ${adv ? `<td><select data-field="scheme"><option ${s.scheme !== 'http' ? 'selected' : ''}>https</option><option ${s.scheme === 'http' ? 'selected' : ''}>http</option></select></td><td><input data-field="launchpadPath" value="${esc(s.launchpadPath)}" class="cell-sm" placeholder="/ui"></td><td><input data-field="launchpadQuery" value="${esc(s.launchpadQuery || '')}" class="cell-sm" placeholder="sap-client=600"></td>` : ''}
       <td><select data-field="env">${ENVS.map((e) => `<option ${e === s.env ? 'selected' : ''}>${e}</option>`).join('')}</select></td>
+      <td><select data-field="edition" title="Which Fiori apps apply">${EDITIONS.map((e) => `<option value="${e}" ${e === s.edition ? 'selected' : ''}>${esc(EDITION_LABELS[e])}</option>`).join('')}</select>${meta?.detectedEdition && ((meta.detectedEdition === 'public') !== (s.edition === 'public')) ? ` <span class="chip low" title="The scan ${meta.detectedEdition === 'public' ? 'found no generic GUI launcher, which suggests Public Cloud' : 'found Shell-startGUI, which Public Cloud does not expose'}">scan says ${meta.detectedEdition === 'public' ? 'Public Cloud' : 'not Public Cloud'}</span>` : ''}</td>
       <td><input type="radio" name="isDefault" data-field="isDefault" ${s.isDefault ? 'checked' : ''}></td>
       <td class="muted">${meta?.lastScanned ? esc(new Date(meta.lastScanned).toLocaleString()) : '–'}${status}${!isDefaultHost(s.host) && s.host && ui.access[s.host] === false ? ` <button class="small" data-action="grant-access" data-host="${esc(s.host)}" title="Needed for discovery and tab reuse on custom hosts">Grant site access</button>` : ''}</td>
       <td class="muted">${meta ? esc(meta.appCount) : '–'}</td>
@@ -171,7 +172,7 @@ function renderSystems() {
         <button class="small danger" data-action="delete-system" data-row="${i}">Delete</button>
       </td></tr>`;
   }).join('');
-  $('#systems-table').innerHTML = `<thead><tr><th>Key</th><th>Name</th><th>Customer</th><th>Host</th>${adv ? '<th>Scheme</th><th>Path</th><th>Query</th>' : ''}<th>Env</th><th>Default</th><th>Last scanned</th><th>Apps</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="10" class="muted">No systems yet. Click "Add system".</td></tr>'}</tbody>`;
+  $('#systems-table').innerHTML = `<thead><tr><th>Key</th><th>Name</th><th>Customer</th><th>Host</th>${adv ? '<th>Scheme</th><th>Path</th><th>Query</th>' : ''}<th>Env</th><th>Edition</th><th>Default</th><th>Last scanned</th><th>Apps</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="11" class="muted">No systems yet. Click "Add system".</td></tr>'}</tbody>`;
   const warnings = keyCollisionWarnings(snap.systems);
   $('#sys-warnings').hidden = !warnings.length;
   $('#sys-warnings').textContent = warnings.join('\n');
@@ -195,8 +196,10 @@ function renderRecent() {
 function renderAliases() {
   const q = ($('#alias-filter').value || '').trim().toLowerCase();
   const src = $('#alias-source').value;
+  const ed = $('#alias-edition').value;
   let list = staticEntries();
   if (src) list = list.filter((e) => e.source === src);
+  if (ed) list = list.filter((e) => appliesToEdition(e, ed));
   if (q) list = list.filter((e) => [e.alias, e.intent, e.title, e.appId, ...(e.tcodes || [])].some((v) => String(v || '').toLowerCase().includes(q)));
   const total = list.length;
   list = list.slice(0, 500);
@@ -208,8 +211,9 @@ function renderAliases() {
     <td><input data-field="title" value="${esc(e.title)}" size="30"></td>
     <td><input data-field="paramKey" value="${esc(e.paramKey ?? '')}" class="cell-sm"></td>
     <td><span class="chip ${esc(e.source)}">${esc(e.source)}</span>${e.confidence === 'low' ? ' <span class="chip low">guess</span>' : ''}</td>
+    <td class="muted">${(e.editions || []).length ? esc(e.editions.map((x) => EDITION_LABELS[x]).join(', ')) : 'all'}</td>
     <td><button class="small danger" data-action="delete-alias" data-idx="${i}">${e.source === 'user' || e.source === 'import' ? 'Delete' : 'Hide'}</button></td></tr>`).join('');
-  $('#aliases-table').innerHTML = `<thead><tr><th>Alias</th><th>Intent</th><th>App ID</th><th>T-codes</th><th>Title</th><th>Param key</th><th>Source</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="8" class="muted">No aliases match.</td></tr>'}</tbody>`;
+  $('#aliases-table').innerHTML = `<thead><tr><th>Alias</th><th>Intent</th><th>App ID</th><th>T-codes</th><th>Title</th><th>Param key</th><th>Source</th><th>Editions</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="9" class="muted">No aliases match.</td></tr>'}</tbody>`;
   renderAliases.visible = list;
   const hidden = snap.hiddenAliases || [];
   $('#hidden-list').innerHTML = hidden.length
@@ -254,7 +258,8 @@ function renderDiscovered() {
   if (!rec) { details.hidden = true; return; }
   details.hidden = false;
   const have = new Set(rec.entries.map((e) => String(e.intent).toLowerCase()));
-  const missing = mergeEntries({ user: snap.userAliases, seed: [...snap.seedAliases, ...snap.importedAliases], hidden: snap.hiddenAliases })
+  const edition = snap.systems.find((s) => s.host === host)?.edition || null;
+  const missing = mergeEntries({ user: snap.userAliases, seed: [...snap.seedAliases, ...snap.importedAliases], hidden: snap.hiddenAliases, edition })
     .filter((e) => e.source !== 'library' && !have.has(e.intent.toLowerCase()) && !/^Shell-/.test(e.intent))
     .sort((a, b) => (a.alias || '~').localeCompare(b.alias || '~') || a.intent.localeCompare(b.intent));
   $('summary', details).textContent = `${missing.length} seed/personal intents not found on this tenant (hidden from suggestions when marked guess)`;
@@ -276,6 +281,7 @@ function readSystemsFromDom() {
       launchpadPath: get('launchpadPath')?.value || '/ui',
       launchpadQuery: get('launchpadQuery')?.value || '',
       env: get('env').value,
+      edition: get('edition').value,
       isDefault: get('isDefault').checked,
     });
   });
@@ -488,7 +494,7 @@ document.addEventListener('change', async (ev) => {
   if (el.closest('#systems-table')) { saveSystems(); return; }
   if (el.closest('#settings')) { saveSettings(); return; }
   if (el.closest('#aliases-table') && el.matches('[data-field]')) { await onAliasCellChange(el.closest('tr')); return; }
-  if (el.id === 'alias-source') renderAliases();
+  if (el.id === 'alias-source' || el.id === 'alias-edition') renderAliases();
   if (el.id === 'disc-host') { ui.discHost = el.value; renderDiscovered(); }
 });
 

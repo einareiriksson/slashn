@@ -2,7 +2,7 @@
 // Only chromeAreas() touches the chrome.* namespace, and only when called.
 import { aliasesFromCsv, tcodesFromCsv } from './csv.js';
 import { applyTcodeTable } from './tcodes.js';
-import { normalizeEntry, DEFAULT_LAUNCHPAD_PATH } from './resolver.js';
+import { normalizeEntry, DEFAULT_LAUNCHPAD_PATH, EDITIONS } from './resolver.js';
 
 export const SCHEMA_VERSION = 1;
 export const SYNC_ITEM_BUDGET = 7000; // bytes; chrome.storage.sync QUOTA_BYTES_PER_ITEM is 8192 (key + value)
@@ -29,6 +29,13 @@ export const KEYS = Object.freeze({
 
 export const DEFAULT_SETTINGS = Object.freeze({ suggestionLimit: 6, autoScanDays: 7, reuseTabOnSameHost: true });
 export const ENVS = Object.freeze(['DEV', 'TST', 'PRD']);
+export { EDITIONS };
+export const EDITION_LABELS = Object.freeze({ public: 'Public Cloud', private: 'Private Cloud', onprem: 'On-Premise' });
+/** Public Cloud is recognisable from the host; private cloud and on-premise are not, so default to on-premise and let the user switch. */
+export function guessEdition(host) {
+  const h = String(host || '').toLowerCase().replace(/:\d+$/, '');
+  return /\.s4hana\.cloud\.sap$|\.s4hana\.ondemand\.com$/.test(h) ? 'public' : 'onprem';
+}
 export const HOST_RE = /^[a-z0-9.-]+(:\d{1,5})?$/;
 export const KEY_RE = /^[a-z0-9][a-z0-9_-]*$/;
 export const ALIAS_RE = /^[a-z0-9][a-z0-9_./-]*$/;
@@ -139,6 +146,7 @@ export function normalizeSystem(raw) {
     launchpadPath: String(r.launchpadPath || DEFAULT_LAUNCHPAD_PATH).trim() || DEFAULT_LAUNCHPAD_PATH,
     launchpadQuery: String(r.launchpadQuery ?? '').trim().replace(/^\?/, ''),
     env: ENVS.includes(env) ? env : 'TST',
+    edition: EDITIONS.includes(String(r.edition || '').toLowerCase()) ? String(r.edition).toLowerCase() : guessEdition(r.host),
     isDefault: Boolean(r.isDefault),
   };
 }
@@ -254,7 +262,9 @@ export function createStorage(areas = null) {
       const all = await one(local, KEYS.DISCOVERED, {});
       all[host] = record;
       const meta = await one(local, KEYS.SCAN_META, {});
-      meta[host] = { lastScanned: record.scannedAt, appCount: (record.entries || []).length };
+      // Public Cloud never exposes the generic GUI/WDA launchers; their presence means private cloud or on-premise.
+      const hasGui = (record.entries || []).some((e) => /^Shell-(startGUI|startWDA)$/i.test(e.intent));
+      meta[host] = { lastScanned: record.scannedAt, appCount: (record.entries || []).length, detectedEdition: hasGui ? 'onprem' : 'public' };
       await local.set({ [KEYS.DISCOVERED]: all, [KEYS.SCAN_META]: meta });
     },
     async clearDiscovered(host) {

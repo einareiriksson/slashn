@@ -29,7 +29,9 @@ Open the launchpad on a registered tenant once and the extension discovers every
 
 ## How aliases resolve
 
-Candidates are merged from four tiers, by precedence: **your aliases** (synced) > **discovered on the tenant** > **seed** (`src/seed/aliases.csv`, `src/seed/tcodes.csv`) > **library** (`src/seed/library.csv`, ~5,700 Public Cloud apps from the Fiori Apps Reference Library). Ranking: exact alias > exact t-code > exact app ID > exact intent > t-code guess > key prefix > title prefix > title words. Entries discovered on the target tenant win ties.
+Each system has an **edition** (Public Cloud, Private Cloud, On-Premise). It defaults from the host (`*.s4hana.cloud.sap` → Public Cloud, otherwise On-Premise) and is editable; the library's apps are tagged with the editions they exist in and only matching ones are suggested, while seed, imported and personal aliases always apply. A scan that finds `Shell-startGUI` on a system marked Public Cloud (or vice versa) is flagged on the Systems tab, since the hostname cannot tell private cloud from on-premise.
+
+Candidates are merged from four tiers, by precedence: **your aliases** (synced) > **discovered on the tenant** > **seed** (`src/seed/aliases.csv`, `src/seed/tcodes.csv`) > **library** (`src/seed/library.csv`, ~17,000 S/4HANA apps from the Fiori Apps Reference Library, tagged by edition). Ranking: exact alias > exact t-code > exact app ID > exact intent > t-code guess > key prefix > title prefix > title words. Entries discovered on the target tenant win ties.
 
 ### Legacy transaction codes
 
@@ -47,14 +49,14 @@ Click the toolbar icon for the same launcher as a small panel: it shows the tena
 
 ## On-premise and private cloud systems
 
-Paste the full launchpad URL, for example `https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#Shell-home`. The port, the launchpad path and the query (`sap-client`, `sap-language`) are stored on the system and reused on every generated URL, so `s acd me21n` opens `https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#PurchaseOrder-create`. `http://` hosts are accepted for internal systems. Discovery uses the same shell services; on UI5 releases older than 1.120 it falls back to `CrossApplicationNavigation` automatically. The t-code table and the app library are Public Cloud oriented, so on-premise users will rely more on discovery and their own aliases.
+Paste the full launchpad URL, for example `https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#Shell-home`. The port, the launchpad path and the query (`sap-client`, `sap-language`) are stored on the system and reused on every generated URL, so `s acd me21n` opens `https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#PurchaseOrder-create`. `http://` hosts are accepted for internal systems. Discovery uses the same shell services; on UI5 releases older than 1.120 it falls back to `CrossApplicationNavigation` automatically. The app library covers on-premise and private cloud apps as well (tagged by edition); the hand-made t-code table is Public Cloud oriented, so on-premise users will rely more on discovery and their own aliases for classic transactions.
 
 ## Options page
 
 - **Systems**: settings (suggestion limit, auto-rescan interval, tab reuse), inline table (key, name, customer, host, env, default, optional launchpad path), per-row Open launchpad / Rescan now / Delete, last scan and app count, a warning when a system key collides with an alias, recent launches with **Pin as alias** for guesses and unresolved inputs. Export/import the whole config as JSON.
 - **Aliases**: merged static table with inline editing (editing a seed/library row creates a personal copy; deleting one hides it), CSV import (into a local import table or into your synced aliases) and export, a transaction-code view with "map t-code", and a per-system view of discovered apps with **Pin as alias** plus a list of seed/personal intents that the scanned tenant does not offer.
 
-CSV format: `alias,semanticObject,action,appId,tcodes,title,paramKey`, `tcodes` separated by `;`.
+CSV format: `alias,semanticObject,action,appId,tcodes,title,paramKey,editions`; `tcodes` and `editions` separated by `;`, editions ⊆ `public;private;onprem` (empty = all).
 
 ## Storage
 
@@ -64,7 +66,7 @@ CSV format: `alias,semanticObject,action,appId,tcodes,title,paramKey`, `tcodes` 
 
 - `src/seed/aliases.csv` – hand-made short aliases with t-codes and parameter keys.
 - `src/seed/tcodes.csv` – t-code → intent table with confidence (`high`/`medium`/`low`).
-- `src/seed/library.csv` – generated: `npm run seed:library` (`tools/fetch-apps-library.mjs`, Node 20+, no dependencies). It pages the library's undocumented OData service (`.../externalViewer/services/SingleApp.xsodata`, filter `substringof('Public Cloud',releaseGroupTextCombined)`), expands each app's intents and writes deterministic, sorted CSV. If the service changes, the script fails with instructions; use the library UI's List view → Export to CSV and run the script with `--from <file>`.
+- `src/seed/library.csv` – generated: `npm run seed:library` (`tools/fetch-apps-library.mjs`, Node 20+, no dependencies). It pages the library's undocumented OData service (`.../externalViewer/services/SingleApp.xsodata`) for every S/4HANA app, expands each app's intents, tags each row with the editions it exists in (`public`, `private;onprem`, from the library's release groups) and writes deterministic, sorted CSV. If the service changes, the script fails with instructions; use the library UI's List view → Export to CSV and run the script with `--from <file>`.
 
 ## Development
 

@@ -34,6 +34,7 @@ export const HOME_INTENT = 'Shell-home';
 export const APP_FINDER_INTENT = 'Shell-appfinder';
 export const MIN_PREFIX_LENGTH = 2;
 /** First tokens that list systems / open options instead of resolving an alias ("?" is special in Chrome's omnibox). */
+export const EDITIONS = Object.freeze(['public', 'private', 'onprem']);
 export const SYSTEMS_WORDS = Object.freeze(['?', 'list', 'systems', 'options', 'settings', 'setup', 'config']);
 
 const str = (v) => (v == null ? '' : String(v).trim());
@@ -98,6 +99,8 @@ export function normalizeEntry(raw) {
   if (intent && (!semanticObject || !action)) [semanticObject, action] = splitIntent(intent);
   const tcodesRaw = Array.isArray(r.tcodes) ? r.tcodes : str(r.tcodes).split(/[;,\s]+/);
   const tcodes = [...new Set(tcodesRaw.map(lc).filter(Boolean))];
+  const editionsRaw = Array.isArray(r.editions) ? r.editions : str(r.editions).split(/[;,\s]+/);
+  const editions = [...new Set(editionsRaw.map(lc).filter((e) => EDITIONS.includes(e)))];
   const alias = lc(r.alias) || null;
   return {
     alias,
@@ -108,6 +111,7 @@ export function normalizeEntry(raw) {
     tcodes,
     title: str(r.title) || intent,
     paramKey: str(r.paramKey) || null,
+    editions,
     source: r.source || 'seed',
     confidence: r.confidence || null,
     discoveredOnTarget: Boolean(r.discoveredOnTarget),
@@ -126,15 +130,18 @@ function union(...lists) {
  * Once a tenant has been scanned, low-confidence static rows whose intent the tenant does not offer are dropped.
  */
 /** Identity of an entry in user/hidden lists: its alias, or "#intent" for alias-less rows. */
+/** `edition` ('public' | 'private' | 'onprem') drops static rows tagged for other editions; untagged rows always apply. */
+export const appliesToEdition = (entry, edition) => !edition || !entry.editions?.length || entry.editions.includes(edition);
+
 export const entryKey = (e) => (e.alias ? lc(e.alias) : `#${lc(e.intent)}`);
 
-export function mergeEntries({ user = [], seed = [], hidden = [], discovered = [] } = {}) {
+export function mergeEntries({ user = [], seed = [], hidden = [], discovered = [], edition = null } = {}) {
   const hiddenSet = new Set(hidden.map(lc));
   const discoveredIntents = new Set(discovered.map((d) => lc(normalizeEntry(d).intent)).filter(Boolean));
   const userEntries = user.map((e) => normalizeEntry({ ...e, source: 'user', discoveredOnTarget: false }));
   const staticEntries = seed
     .map((e) => normalizeEntry(e))
-    .filter((e) => e.intent && !hiddenSet.has(entryKey(e)))
+    .filter((e) => e.intent && !hiddenSet.has(entryKey(e)) && appliesToEdition(e, edition))
     .filter((e) => !(discoveredIntents.size && e.confidence === 'low' && !discoveredIntents.has(lc(e.intent))))
     .sort((a, b) => (SOURCE_RANK[b.source] ?? 0) - (SOURCE_RANK[a.source] ?? 0));
 
@@ -252,6 +259,7 @@ export function rank(parsed, index, { limit = 6, guesser = null } = {}) {
   }
 
   matches.sort((a, b) => b.score - a.score
+    || (a.entry.alias?.length ?? 99) - (b.entry.alias?.length ?? 99) // same score: shorter alias (f0842 before dfs_po_manage)
     || cmpNullable(a.entry.alias, b.entry.alias)
     || lc(a.entry.intent).localeCompare(lc(b.entry.intent)));
 

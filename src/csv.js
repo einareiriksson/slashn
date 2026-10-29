@@ -1,6 +1,6 @@
 // RFC4180-ish CSV parse/serialize plus the alias and t-code row mappings. Pure module.
 
-export const ALIAS_COLUMNS = ['alias', 'semanticObject', 'action', 'appId', 'tcodes', 'title', 'paramKey'];
+export const ALIAS_COLUMNS = ['alias', 'semanticObject', 'action', 'appId', 'tcodes', 'title', 'paramKey', 'editions'];
 export const TCODE_COLUMNS = ['tcode', 'semanticObject', 'action', 'appId', 'paramKey', 'confidence', 'note'];
 
 export function parseCsv(text) {
@@ -79,7 +79,8 @@ export const splitList = (v) => String(v ?? '').split(/[;|]+/).map((t) => t.trim
 
 /**
  * aliasesFromCsv(text, { source }) → { entries, errors }
- * Columns: alias,semanticObject,action,appId,tcodes,title,paramKey  (tcodes ';'-separated)
+ * Columns: alias,semanticObject,action,appId,tcodes,title,paramKey,editions  (tcodes and editions ';'-separated;
+ * editions ⊆ public;private;onprem, empty = all)
  */
 export function aliasesFromCsv(text, { source = 'seed' } = {}) {
   const { objects, errors } = parseObjects(text, ['semanticObject', 'action']);
@@ -99,6 +100,7 @@ export function aliasesFromCsv(text, { source = 'seed' } = {}) {
       tcodes: splitList(pick(o, 'tcodes')),
       title: pick(o, 'title') || `${semanticObject}-${action}`,
       paramKey: pick(o, 'paramKey') || null,
+      editions: splitList(pick(o, 'editions')),
       source,
     });
   }
@@ -108,7 +110,7 @@ export function aliasesFromCsv(text, { source = 'seed' } = {}) {
 export function aliasesToCsv(entries) {
   const rows = [ALIAS_COLUMNS];
   for (const e of entries || []) {
-    rows.push([e.alias ?? '', e.semanticObject ?? '', e.action ?? '', e.appId ?? '', (e.tcodes || []).join(';'), e.title ?? '', e.paramKey ?? '']);
+    rows.push([e.alias ?? '', e.semanticObject ?? '', e.action ?? '', e.appId ?? '', (e.tcodes || []).join(';'), e.title ?? '', e.paramKey ?? '', (e.editions || []).join(';')]);
   }
   return serializeCsv(rows);
 }

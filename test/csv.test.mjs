@@ -26,10 +26,11 @@ test('aliasesFromCsv: header order independence, tcodes split, errors with line 
   assert.equal(aliasesFromCsv('alias,title\nx,y').errors[0].message.includes('semanticObject'), true);
   const noAlias = aliasesFromCsv('alias,semanticObject,action,appId\n,PurchaseOrder,manage,F0842\n');
   assert.equal(noAlias.entries[0].alias, 'f0842');
+  assert.deepEqual(noAlias.entries[0].editions, []);
 });
 
 test('aliasesToCsv → aliasesFromCsv round-trip', () => {
-  const entries = [{ alias: 'po', semanticObject: 'PurchaseOrder', action: 'manage', appId: 'F0842', tcodes: ['me22n'], title: 'Manage, "POs"', paramKey: 'PurchaseOrder' }];
+  const entries = [{ alias: 'po', semanticObject: 'PurchaseOrder', action: 'manage', appId: 'F0842', tcodes: ['me22n'], title: 'Manage, "POs"', paramKey: 'PurchaseOrder', editions: ['public', 'onprem'] }];
   const back = aliasesFromCsv(aliasesToCsv(entries), { source: 'user' }).entries;
   assert.deepEqual(back, [{ ...entries[0], source: 'user' }]);
 });

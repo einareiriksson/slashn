@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  systemFromUrl, parseLaunchpadUrl, isDefaultHost,
+  systemFromUrl, parseLaunchpadUrl, isDefaultHost, guessEdition,
   chunkArray, byteSize, readChunked, writeChunked, migrateSnapshot, memoryArea, createStorage, buildSeedEntries, validateSystems, normalizeSystem, SCHEMA_VERSION, KEYS,
 } from '../src/storage.js';
 
@@ -73,7 +73,9 @@ test('createStorage: typed api, migrate, export/import round-trip', async () => 
   assert.equal(await s.getPendingRescan('my1.s4hana.cloud.sap'), true);
   await s.setPendingRescan('my1.s4hana.cloud.sap', false);
   assert.equal(await s.getPendingRescan('my1.s4hana.cloud.sap'), false);
-  assert.deepEqual((await s.getScanMeta())['my1.s4hana.cloud.sap'], { lastScanned: '2026-01-01T00:00:00Z', appCount: 1 });
+  assert.deepEqual((await s.getScanMeta())['my1.s4hana.cloud.sap'], { lastScanned: '2026-01-01T00:00:00Z', appCount: 1, detectedEdition: 'public' });
+  await s.setDiscovered('op.example', { scannedAt: '2026-01-01T00:00:00Z', entries: [{ intent: 'Shell-startGUI', title: 'gui' }] });
+  assert.equal((await s.getScanMeta())['op.example'].detectedEdition, 'onprem');
   await assert.rejects(() => s.setSystems([{ key: 'x', host: 'bad host' }]));
 
   const exported = await s.exportJson();
@@ -113,7 +115,7 @@ test('buildSeedEntries merges aliases, library and tcodes; applySeed respects ve
 
 test('systemFromUrl builds a row from a pasted URL', () => {
   const a = systemFromUrl('https://my419228.s4hana.cloud.sap', []);
-  assert.deepEqual(a, { key: 'my419228', name: 'my419228.s4hana.cloud.sap', customer: '', host: 'my419228.s4hana.cloud.sap', scheme: 'https', launchpadPath: '/ui', launchpadQuery: '', env: 'TST', isDefault: true });
+  assert.deepEqual(a, { key: 'my419228', name: 'my419228.s4hana.cloud.sap', customer: '', host: 'my419228.s4hana.cloud.sap', scheme: 'https', launchpadPath: '/ui', launchpadQuery: '', env: 'TST', edition: 'public', isDefault: true });
   const b = systemFromUrl('https://acd.finteq.io/ui#Shell-home', [a]);
   assert.equal(b.key, 'acd');
   assert.equal(b.customer, 'finteq');
@@ -131,6 +133,10 @@ test('systemFromUrl builds a row from a pasted URL', () => {
   assert.equal(op.launchpadPath, '/sap/bc/ui2/flp');
   assert.equal(op.launchpadQuery, 'sap-client=600');
   assert.equal(op.scheme, 'https');
+  assert.equal(op.edition, 'onprem');
+  assert.equal(guessEdition('my300001.s4hana.ondemand.com'), 'public');
+  assert.equal(normalizeSystem({ host: 'x.y', edition: 'private' }).edition, 'private');
+  assert.equal(normalizeSystem({ host: 'x.y', edition: 'bogus' }).edition, 'onprem');
   assert.deepEqual(validateSystems([op]), []);
   assert.equal(systemFromUrl('http://erp.internal.example:8000/sap/bc/ui2/flp?sap-client=100&sap-language=EN', []).launchpadQuery, 'sap-client=100&sap-language=EN');
   assert.equal(systemFromUrl('http://erp.internal.example:8000/', []).scheme, 'http');

@@ -219,3 +219,19 @@ test('custom hosts get dynamic content scripts once access is granted', async ()
   await tick();
   assert.deepEqual(chrome.scripting.registered, []);
 });
+
+test('suggestions respect the system edition', async () => {
+  const seed = (await local.get('seedAliases')).seedAliases;
+  await local.set({ seedAliases: [...seed,
+    { alias: 'pubonly', semanticObject: 'Zeta', action: 'pub', intent: 'Zeta-pub', title: 'Zeta public', editions: ['public'], source: 'library', tcodes: [] },
+    { alias: 'oponly', semanticObject: 'Zeta', action: 'op', intent: 'Zeta-op', title: 'Zeta onprem', editions: ['private', 'onprem'], source: 'library', tcodes: [] }] });
+  const systems = (await sync.get('systems')).systems;
+  await sync.set({ systems: [...systems, { key: 'op', name: 'On-prem', customer: 'x', host: 'erp.example:8443', launchpadPath: '/sap/bc/ui2/flp', env: 'TST', edition: 'onprem', isDefault: false }] });
+  L.storageChanged({ systems: {} }, 'sync');
+  await tick();
+  assert.deepEqual((await changed('acd zeta')).map((x) => x.content), ['acd pubonly']);
+  assert.deepEqual((await changed('op zeta')).map((x) => x.content), ['op oponly']);
+  await sync.set({ systems });
+  L.storageChanged({ systems: {} }, 'sync');
+  await tick();
+});

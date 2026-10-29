@@ -35,7 +35,7 @@
       <div id="sys-errors" class="errors" hidden></div>
       <div id="sys-warnings" class="warnings" hidden></div>
       <div class="table-wrap"><table id="systems-table" class="grid"></table></div>
-      <p class="hint">Keys are what you type in the omnibox (lowercase). Exactly one system is the default; otherwise the most recently used one is picked. Host has no scheme or path, e.g. <code>my123456.s4hana.cloud.sap</code> or <code>erp.example.com:8443</code>; on-premise path and <code>sap-client</code> live under the advanced columns.</p>
+      <p class="hint">Keys are what you type in the omnibox (lowercase). Edition decides which library apps are suggested: it is Public Cloud for <code>*.s4hana.cloud.sap</code> hosts and On-Premise otherwise; switch to Private Cloud by hand (same app set as On-Premise). Exactly one system is the default; otherwise the most recently used one is picked. Host has no scheme or path, e.g. <code>my123456.s4hana.cloud.sap</code> or <code>erp.example.com:8443</code>; on-premise path and <code>sap-client</code> live under the advanced columns.</p>
 
       <h2>Settings</h2>
       <form id="settings" class="row-form settings">
@@ -59,6 +59,7 @@
         <div class="toolbar">
           <input type="search" id="alias-filter" placeholder="Filter alias, intent, title, t-code…">
           <select id="alias-source"><option value="">all sources</option><option value="user">mine</option><option value="import">imported</option><option value="seed">seed</option><option value="library">library</option></select>
+          <select id="alias-edition"><option value="">all editions</option><option value="public">Public Cloud</option><option value="private">Private Cloud</option><option value="onprem">On-Premise</option></select>
           <span class="spacer"></span>
           <button data-action="import-csv">Import CSV</button>
           <select id="import-target" title="Where imported rows go"><option value="import">into local import table (this device)</option><option value="user">into my aliases (synced, small)</option></select>
