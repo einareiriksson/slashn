@@ -43,6 +43,15 @@ Two content scripts run on `https://*.s4hana.cloud.sap/ui*`. The MAIN-world scri
 
 Scans run when the launchpad loads on a registered host and the last scan is missing or older than 7 days, or when you click **Rescan now** in options.
 
+### Is the app available to me?
+
+`getLinks` only returns intents the launchpad can resolve for the logged-in user, so a scan tells you what *you* can open on that system. slashn uses it two ways:
+
+- **After a scan**, every suggestion for that system is judged: intents the scan offers are tagged `on tenant`; intents it lacks are tagged `not found on <key>` (omnibox) or `not on <key>` (popup) and sink below other matches of the same kind. Unscanned systems and `Shell-*` intents get no tag. The omnibox still opens such an app on Enter (the launchpad then shows its own error); the popup asks once and opens on a second Enter.
+- **Live check**: when a tab of the target system is already open, the popup asks that page `Navigation.isNavigationSupported` for the suggested intents and shows `available` / `not available` for your current session. The same check runs right before a popup launch, and a live answer overrides the scan. If live and scan disagree, the host is rescanned on its next load.
+
+What the extension cannot tell apart is *not installed* versus *not authorised*: from the browser both look the same (the intent is missing). Data-level authorisations, for instance a company code you may not see, only surface once the app runs.
+
 ## Toolbar popup
 
 Click the toolbar icon for the same launcher as a small panel. It looks at the active tab: on a registered tenant, queries without a system key search that tenant; on an unregistered page that looks like a Fiori launchpad (SAP cloud host, `/sap/bc/ui2/flp` path, intent-style hash, or a page exposing `sap.ushell`) it offers **Add as system**, which derives the row from the URL and asks for site access on custom hosts. It also shows an input that behaves like the omnibox (type, arrow keys, Enter; Ctrl/Cmd+Enter for a new tab) and the last ten launches.
@@ -81,6 +90,7 @@ No build step; plain ES modules. `src/resolver.js`, `src/csv.js`, `src/tcodes.js
 ## Limitations (v1)
 
 - Unknown alias: the App Finder opens and the typed text is copied to the clipboard (via an offscreen document); the finder's search box is not pre-filled because the `searchTerm` URL parameter is not stable across releases. Paste it.
+- Availability is per host, not per user: if several people share one Chrome profile, the scan reflects whoever loaded the launchpad last. The live check always reflects the session in the open tab.
 - Seed intents with confidence `low` are educated guesses. Scan a tenant to verify them; the options page marks guesses.
 - One Chrome profile per customer is recommended when IAS tenants collide; each profile keeps its own systems list.
 - A deep link opened while your IAS session has expired may lose its hash after login; re-run the command.

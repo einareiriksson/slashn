@@ -4,7 +4,7 @@
 (() => {
   'use strict';
   const NS = 'SAPQS';
-  const PM = { MAIN_READY: 'SAPQS_MAIN_READY', RESCAN: 'SAPQS_RESCAN', DISCOVERY: 'SAPQS_DISCOVERY', DISCOVERY_ERROR: 'SAPQS_DISCOVERY_ERROR' };
+  const PM = { MAIN_READY: 'SAPQS_MAIN_READY', RESCAN: 'SAPQS_RESCAN', DISCOVERY: 'SAPQS_DISCOVERY', DISCOVERY_ERROR: 'SAPQS_DISCOVERY_ERROR', CHECK: 'SAPQS_CHECK', CHECK_RESULT: 'SAPQS_CHECK_RESULT' };
   const LOG = '[SAPQS]';
   const POLL_MS = 500;
   const POLL_LIMIT_MS = 60000;
@@ -20,9 +20,36 @@
   window.addEventListener('message', (event) => {
     if (event.source !== window || event.origin !== location.origin) return;
     const d = event.data;
-    if (!d || d.ns !== NS || d.type !== PM.RESCAN) return;
-    scan();
+    if (!d || d.ns !== NS) return;
+    if (d.type === PM.RESCAN) scan();
+    else if (d.type === PM.CHECK) check(d.id, Array.isArray(d.intents) ? d.intents : []);
   });
+
+  /** Live "can this user navigate there right now?" via the shell's own resolver. Answers { supported:[bool] } in input order. */
+  async function check(id, intents) {
+    const targets = intents.map((i) => {
+      const m = /^([A-Za-z0-9_]+)-([A-Za-z0-9_]+)$/.exec(String(i || '').replace(/^#/, ''));
+      return m ? { target: { semanticObject: m[1], action: m[2] } } : null;
+    });
+    try {
+      if (!(window.sap && window.sap.ushell && window.sap.ushell.Container && window.sap.ushell.Container.getServiceAsync)) throw new Error('shell not ready');
+      const valid = targets.filter(Boolean);
+      let res = null;
+      try {
+        const nav = await getService('Navigation');
+        res = await nav.isNavigationSupported(valid);
+      } catch (e) {
+        const can = await getService('CrossApplicationNavigation');
+        res = await Promise.resolve(can.isNavigationSupported(valid));
+      }
+      const flags = Array.isArray(res) ? res.map((r) => Boolean(r && r.supported)) : [];
+      let j = 0;
+      const supported = targets.map((t) => (t ? Boolean(flags[j++]) : false));
+      post({ type: PM.CHECK_RESULT, id, supported });
+    } catch (e) {
+      post({ type: PM.CHECK_RESULT, id, supported: null, error: String((e && e.message) || e) });
+    }
+  }
   post({ type: PM.MAIN_READY });
 
   function scan() {

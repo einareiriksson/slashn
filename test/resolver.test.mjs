@@ -249,3 +249,40 @@ test('mergeEntries: edition filter keeps untagged rows and drops rows for other 
   assert.deepEqual(keys(null), ['all', 'junk', 'op', 'pub']);
   assert.deepEqual(mergeEntries({ user: [{ alias: 'mine', intent: 'A-x', title: 'm', editions: ['onprem'] }], edition: 'public' }).map((e) => e.alias), ['mine']); // user rows always apply
 });
+
+test('mergeEntries: onTarget is null before a scan, true/false after, never judged for Shell-* intents', () => {
+  const unscanned = mergeEntries({ seed });
+  assert.ok(unscanned.every((e) => e.onTarget === null));
+  const discovered = [{ intent: 'PurchaseOrder-manage', title: 'Manage Purchase Orders' }];
+  const merged = mergeEntries({ seed: [...seed, { alias: 'home', intent: 'Shell-home', title: 'Home', source: 'seed' }], discovered, user: [{ alias: 'mine', intent: 'SalesOrder-manage', title: 'Mine' }] });
+  const by = Object.fromEntries(merged.map((e) => [e.alias, e]));
+  assert.equal(by.po.onTarget, true); // static row, intent offered by the tenant
+  assert.equal(by.po.discoveredOnTarget, false); // but no ranking bonus; that stays with discovered rows
+  assert.equal(by.me21n.onTarget, false);
+  assert.equal(by.mine.onTarget, false); // user rows are judged too
+  assert.equal(by.home.onTarget, null);
+});
+
+test('rank: absent-after-scan rows sink within their tier but never below a lower tier', () => {
+  const discovered = [{ intent: 'PurchaseOrder-manage', title: 'Manage Purchase Orders' }];
+  const merged = mergeEntries({ seed, discovered });
+  const r = rank(parseInput('acd me2', systems), buildIndex(merged)); // key prefix: me21n (absent), po via me22n/me2l (present), me23n (absent)
+  assert.equal(r[0].entry.intent, 'PurchaseOrder-manage');
+  assert.ok(r.slice(1).every((m) => m.entry.onTarget === false));
+  const exact = rank(parseInput('acd me21n', systems), buildIndex(merged));
+  assert.equal(exact[0].entry.alias, 'me21n'); // an exact alias still wins over a present fuzzy/prefix match
+});
+
+test('formatting: availability tags and default-description warning', () => {
+  const discovered = [{ intent: 'PurchaseOrder-manage', title: 'Manage Purchase Orders' }];
+  const merged = mergeEntries({ seed, discovered });
+  const parsedAbsent = parseInput('acd me21n', systems);
+  const absent = rank(parsedAbsent, buildIndex(merged))[0];
+  assert.ok(formatSuggestion(absent, systems[0]).description.includes('not found on acd'));
+  assert.ok(formatDefaultDescription(parsedAbsent, absent).includes('not found on acd in the last scan'));
+  const present = rank(parseInput('acd po', systems), buildIndex(merged))[0];
+  assert.ok(formatSuggestion(present, systems[0]).description.includes('on tenant'));
+  const unknown = rank(parseInput('acd po', systems), buildIndex(mergeEntries({ seed })))[0];
+  const d = formatSuggestion(unknown, systems[0]).description;
+  assert.ok(!d.includes('tenant') && !d.includes('not found'));
+});

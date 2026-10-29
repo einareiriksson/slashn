@@ -16,6 +16,7 @@ const warn = (...args) => console.warn(LOG_PREFIX, ...args);
 let cachePromise = null;
 let latestInput = null;
 let contextKey = null; // system key of the tab the omnibox session started on
+const LIVE_CHECK_TIMEOUT_MS = 3000;
 
 // ---------------------------------------------------------------- listeners (must be registered synchronously)
 
@@ -205,7 +206,48 @@ async function onInputEntered(text, disposition) {
   return launch(text, disposition);
 }
 
-async function launch(text, disposition, preferredKey = contextKey) {
+/**
+ * Ask an open launchpad tab of `system` whether the current session can navigate to `intents` (Navigation.isNavigationSupported).
+ * Returns { available: { intent: bool }, tabId } or null when no tab with a live content script exists.
+ */
+async function liveCheck(system, intents) {
+  const list = [...new Set(intents.filter((i) => i && !/^shell-/i.test(i)))];
+  if (!list.length || !chrome.tabs?.sendMessage) return null;
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: originPattern(system) }); } catch { return null; }
+  tabs.sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
+  for (const tab of tabs.slice(0, 3)) {
+    try {
+      const reply = await Promise.race([
+        chrome.tabs.sendMessage(tab.id, { type: MSG.CHECK_INTENTS, intents: list }),
+        new Promise((resolve) => setTimeout(() => resolve(null), LIVE_CHECK_TIMEOUT_MS)),
+      ]);
+      if (!reply || !Array.isArray(reply.supported)) continue;
+      const available = {};
+      (reply.intents || list).forEach((intent, i) => { available[intent] = Boolean(reply.supported[i]); });
+      return { available, tabId: tab.id };
+    } catch { /* tab predates install or has no content script */ }
+  }
+  return null;
+}
+
+/** A live answer that contradicts the stored scan marks the host for a rescan on its next load. */
+async function noteMismatch(system, entry, live) {
+  if (!live || entry.onTarget == null) return;
+  const l = live.available[entry.intent];
+  if (l != null && l !== entry.onTarget) {
+    log('live check differs from scan; rescan scheduled', system.key, entry.intent, { scan: entry.onTarget, live: l });
+    await storage.setPendingRescan(system.host, true).catch(() => {});
+  }
+}
+
+/**
+ * launch(text, disposition, preferredKey, { confirm, force })
+ * confirm=true (popup): when the top match is known to be unavailable – by a live check against an open tab,
+ * else by the last scan – nothing is opened and { action:'blocked' } is returned so the UI can ask once; force=true overrides.
+ * The omnibox has no way to ask, so it always opens and lets the launchpad show its own error.
+ */
+async function launch(text, disposition, preferredKey = contextKey, { confirm = false, force = false } = {}) {
   const cache = await getCache();
   const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey, preferredKey });
   const system = parsed.system;
@@ -228,12 +270,29 @@ async function launch(text, disposition, preferredKey = contextKey) {
     return { action: 'appfinder', url };
   }
   const url = buildUrl(system, top.entry, top.param);
+  let availability = top.entry.onTarget; // true | false | null
+  let basis = availability == null ? null : 'scan';
+  if (confirm && !force) {
+    const live = await liveCheck(system, [top.entry.intent]);
+    if (live && live.available[top.entry.intent] != null) {
+      availability = live.available[top.entry.intent];
+      basis = 'live';
+      await noteMismatch(system, top.entry, live);
+    }
+    if (availability === false) {
+      return {
+        action: 'blocked', basis, url, intent: top.entry.intent, title: top.entry.title, systemKey: system.key,
+        scannedAt: cache.scanMeta?.[system.host]?.lastScanned || null,
+      };
+    }
+  }
   await navigate(url, system, disposition, cache.settings);
   await remember({
     systemKey: system.key, host: system.host, intent: top.entry.intent, alias: top.entry.alias, title: top.entry.title,
     url, input: text, param: top.param, matchType: top.type, guess: top.type === MATCH.TCODE_GUESS || top.entry.confidence === 'low',
+    unavailable: availability === false ? basis : null,
   });
-  return { action: 'open', url };
+  return { action: 'open', url, availability, basis };
 }
 
 const plainText = (s) => String(s).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
@@ -261,8 +320,10 @@ async function resolveForPopup(text, contextHost = null) {
       param: m.param,
       systemKey: parsed.system.key,
       guess: m.type === MATCH.TCODE_GUESS || m.entry.confidence === 'low',
-      onTenant: Boolean(m.entry.discoveredOnTarget),
+      onTenant: m.entry.onTarget === true,
+      missing: m.entry.onTarget === false,
     })),
+    scannedAt: cache.scanMeta?.[parsed.system.host]?.lastScanned || null,
   };
 }
 
@@ -399,7 +460,18 @@ async function handleMessage(msg, sender) {
       return resolveForPopup(String(msg.text ?? ''), msg.contextHost || null);
     case MSG.NAVIGATE: {
       const cache = await getCache();
-      return launch(String(msg.text ?? ''), msg.disposition || 'currentTab', systemByHost(cache.systems, msg.contextHost)?.key ?? null);
+      return launch(String(msg.text ?? ''), msg.disposition || 'currentTab', systemByHost(cache.systems, msg.contextHost)?.key ?? null, { confirm: true, force: Boolean(msg.force) });
+    }
+    case MSG.LIVE_CHECK: {
+      const cache = await getCache();
+      const system = systemByHost(cache.systems, msg.host);
+      if (!system) return { available: null, reason: 'unregistered host' };
+      const intents = (Array.isArray(msg.intents) ? msg.intents : []).map(String).slice(0, 50);
+      const live = await liveCheck(system, intents);
+      if (!live) return { available: null, reason: 'no launchpad tab open' };
+      const index = indexFor(cache, system);
+      for (const ix of index) if (ix.entry.intent in live.available) await noteMismatch(system, ix.entry, live);
+      return { available: live.available, reason: 'live', tabId: live.tabId };
     }
     case MSG.OPEN_URL: {
       const cache = await getCache();

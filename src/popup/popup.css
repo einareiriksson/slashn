@@ -21,6 +21,9 @@ header { display: flex; align-items: center; justify-content: space-between; mar
 .chip { display: inline-block; padding: 0 5px; border-radius: 8px; background: var(--chip); font-size: 10px; color: var(--muted); }
 .chip.guess { background: #fdecea; color: #8a1c1c; }
 .chip.tenant { background: #e2f6e6; color: #1b6b2b; }
+.chip.live { background: #1b6b2b; color: #fff; }
+.chip.missing { background: #fdecea; color: #8a1c1c; }
+.list li.sel .chip.missing, .list li:hover .chip.missing { outline: 1px solid #c62828; }
 h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 2px 4px; }
 .recent li .title { color: var(--muted); }
 .muted { color: var(--muted); }

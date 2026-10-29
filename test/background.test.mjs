@@ -17,6 +17,7 @@ const session = memoryArea();
 const activeTab = { id: 1, url: 'https://my1.s4hana.cloud.sap/ui#Shell-home' };
 let openTabs = [];
 let lastDefault = '';
+let liveReply = null; // fake content-script answer to CHECK_INTENTS
 
 globalThis.chrome = {
   runtime: {
@@ -43,7 +44,12 @@ globalThis.chrome = {
     create: async (o) => { calls.push(['create', o]); return { id: 2 }; },
     update: async (id, o) => { calls.push(['update', id, o]); return { id }; },
     reload: async (id) => { calls.push(['reload', id]); },
-    sendMessage: async (id, m) => { calls.push(['tabMessage', id, m]); if (id === 99) throw new Error('no receiver'); return {}; },
+    sendMessage: async (id, m) => {
+      calls.push(['tabMessage', id, m]);
+      if (id === 99) throw new Error('no receiver');
+      if (m.type === MSG.CHECK_INTENTS) return liveReply ? liveReply(m.intents) : {};
+      return {};
+    },
   },
   offscreen: {
     createDocument: async (o) => { calls.push(['offscreen', o.reasons]); },
@@ -256,4 +262,58 @@ test('queries without a system key go to the current tab\'s system', async () =>
   calls.length = 0;
   await send({ type: MSG.NAVIGATE, text: 'me21n', disposition: 'newForegroundTab', contextHost: 'my2.s4hana.cloud.sap' }, { id: 'ext' });
   assert.deepEqual(calls[0], ['create', { url: 'https://my2.s4hana.cloud.sap/ui#PurchaseOrder-create', active: true }]);
+});
+
+test('availability: scan marks absent intents; popup launch is blocked once and forced on retry', async () => {
+  // my1 was scanned above with PurchaseOrder-manage, ZCustom-run, SalesContract-manage; PurchaseOrder-create is absent.
+  openTabs = [];
+  const s = await changed('acd me21n');
+  assert.ok(s[0].description.includes('not found on acd'));
+  assert.ok(lastDefault.includes('not found on acd in the last scan'));
+  assert.ok((await changed('acd po'))[0].description.includes('on tenant'));
+  const r = await send({ type: MSG.RESOLVE, text: 'acd me21n' }, { id: 'ext' });
+  assert.equal(r.matches[0].missing, true);
+  assert.equal(r.matches[0].onTenant, false);
+  assert.ok(r.scannedAt);
+  calls.length = 0;
+  const blocked = await send({ type: MSG.NAVIGATE, text: 'acd me21n', disposition: 'newForegroundTab' }, { id: 'ext' });
+  assert.equal(blocked.action, 'blocked');
+  assert.equal(blocked.basis, 'scan');
+  assert.ok(!calls.some((c) => c[0] === 'create'));
+  const forced = await send({ type: MSG.NAVIGATE, text: 'acd me21n', disposition: 'newForegroundTab', force: true }, { id: 'ext' });
+  assert.equal(forced.action, 'open');
+  assert.ok(calls.some((c) => c[0] === 'create'));
+  // the omnibox never blocks
+  calls.length = 0;
+  L.onInputEntered('acd me21n', 'newForegroundTab');
+  await tick(80);
+  assert.ok(calls.some((c) => c[0] === 'create'));
+  // unscanned host: nothing is claimed
+  const t = await send({ type: MSG.RESOLVE, text: 'tst me21n' }, { id: 'ext' });
+  assert.equal(t.matches[0].missing, false);
+  assert.equal(await (await send({ type: MSG.NAVIGATE, text: 'tst me21n', disposition: 'newForegroundTab' }, { id: 'ext' })).action, 'open');
+});
+
+test('availability: live check through an open launchpad tab overrides the scan', async () => {
+  openTabs = [{ id: 7, url: 'https://my1.s4hana.cloud.sap/ui#Shell-home' }];
+  liveReply = (intents) => ({ intents, supported: intents.map((i) => i === 'PurchaseOrder-create') });
+  const live = await send({ type: MSG.LIVE_CHECK, host: 'my1.s4hana.cloud.sap', intents: ['PurchaseOrder-create', 'PurchaseOrder-manage', 'Shell-home'] }, { id: 'ext' });
+  assert.deepEqual(live.available, { 'PurchaseOrder-create': true, 'PurchaseOrder-manage': false });
+  assert.equal(live.tabId, 7);
+  // both answers contradict the scan → rescan is scheduled for the next load
+  assert.equal((await session.get('pendingRescan')).pendingRescan['my1.s4hana.cloud.sap'], true);
+  calls.length = 0;
+  const open = await send({ type: MSG.NAVIGATE, text: 'acd me21n', disposition: 'newForegroundTab' }, { id: 'ext' });
+  assert.equal(open.action, 'open'); // scan said absent, live says available
+  assert.equal(open.basis, 'live');
+  const blocked = await send({ type: MSG.NAVIGATE, text: 'acd po', disposition: 'newForegroundTab' }, { id: 'ext' });
+  assert.equal(blocked.action, 'blocked'); // scan said present, live says no
+  assert.equal(blocked.basis, 'live');
+  // tab without a content script (pre-install) → fall back to the scan
+  liveReply = null;
+  openTabs = [{ id: 99, url: 'https://my1.s4hana.cloud.sap/ui' }];
+  const none = await send({ type: MSG.LIVE_CHECK, host: 'my1.s4hana.cloud.sap', intents: ['PurchaseOrder-create'] }, { id: 'ext' });
+  assert.equal(none.available, null);
+  assert.equal((await send({ type: MSG.NAVIGATE, text: 'acd me21n', disposition: 'newForegroundTab' }, { id: 'ext' })).basis, 'scan');
+  openTabs = [];
 });

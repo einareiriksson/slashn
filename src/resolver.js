@@ -116,8 +116,13 @@ export function normalizeEntry(raw) {
     source: r.source || 'seed',
     confidence: r.confidence || null,
     discoveredOnTarget: Boolean(r.discoveredOnTarget),
+    // true = the last scan of the target offers this intent, false = scanned and absent, null = unknown (no scan / Shell intent)
+    onTarget: r.onTarget === true ? true : r.onTarget === false ? false : null,
   };
 }
+
+/** Shell-* intents (home, app finder) are never listed by getLinks; their presence cannot be judged from a scan. */
+export const isShellIntent = (intent) => /^shell-/i.test(str(intent));
 
 function union(...lists) {
   return [...new Set(lists.flat().filter(Boolean))];
@@ -139,9 +144,12 @@ export const entryKey = (e) => (e.alias ? lc(e.alias) : `#${lc(e.intent)}`);
 export function mergeEntries({ user = [], seed = [], hidden = [], discovered = [], edition = null } = {}) {
   const hiddenSet = new Set(hidden.map(lc));
   const discoveredIntents = new Set(discovered.map((d) => lc(normalizeEntry(d).intent)).filter(Boolean));
-  const userEntries = user.map((e) => normalizeEntry({ ...e, source: 'user', discoveredOnTarget: false }));
+  const scanned = discoveredIntents.size > 0;
+  const onTarget = (intent) => (!scanned || isShellIntent(intent) ? null : discoveredIntents.has(lc(intent)));
+  const judged = (e) => ({ ...e, onTarget: onTarget(e.intent) }); // after normalizeEntry, which derives intent from semanticObject/action
+  const userEntries = user.map((e) => judged(normalizeEntry({ ...e, source: 'user', discoveredOnTarget: false })));
   const staticEntries = seed
-    .map((e) => normalizeEntry(e))
+    .map((e) => judged(normalizeEntry(e)))
     .filter((e) => e.intent && !hiddenSet.has(entryKey(e)) && appliesToEdition(e, edition))
     .filter((e) => !(discoveredIntents.size && e.confidence === 'low' && !discoveredIntents.has(lc(e.intent))))
     .sort((a, b) => (SOURCE_RANK[b.source] ?? 0) - (SOURCE_RANK[a.source] ?? 0));
@@ -154,7 +162,7 @@ export function mergeEntries({ user = [], seed = [], hidden = [], discovered = [
   }
 
   const discoveredEntries = discovered
-    .map((d) => normalizeEntry({ ...d, source: 'discovered', discoveredOnTarget: true }))
+    .map((d) => normalizeEntry({ ...d, source: 'discovered', discoveredOnTarget: true, onTarget: true }))
     .filter((e) => e.intent)
     .map((e) => {
       const sibs = byIntent.get(e.intent.toLowerCase()) || [];
@@ -230,6 +238,7 @@ export function matchEntry(ix, head, query) {
 export function scoreMatch(type, entry, coverage = 0) {
   return Math.round(TIER[type] * 20000)
     + (entry.discoveredOnTarget ? 5000 : 0)
+    - (entry.onTarget === false ? 5000 : 0) // scanned and absent: sinks within its tier, never below a lower tier
     + Math.round(Math.min(coverage, 1.2) * 1000)
     + Math.max(0, 200 - str(entry.title).length);
 }
@@ -344,7 +353,8 @@ export function formatSuggestion(match, system) {
   const mid = isTitle ? `<match>${escapeXml(e.title)}</match>` : escapeXml(e.title);
   const tags = [system.key, e.intent];
   if (match.type === MATCH.TCODE_GUESS || e.confidence === 'low') tags.push('guess');
-  if (e.discoveredOnTarget) tags.push('on tenant');
+  if (e.onTarget === true) tags.push('on tenant');
+  else if (e.onTarget === false) tags.push(`not found on ${system.key}`);
   return { content: suggestionContent(match, system), description: `${left}  ${mid}  <dim>[${escapeXml(tags.join(' · '))}]</dim>` };
 }
 
@@ -369,7 +379,8 @@ export function formatDefaultDescription(parsed, topMatch = null) {
     case 'query':
       if (topMatch) {
         const e = topMatch.entry;
-        return `Open <match>${escapeXml(e.alias ?? e.intent)}</match> ${escapeXml(e.title)}${topMatch.param ? ' ' + escapeXml(topMatch.param) : ''} ${where}`;
+        const warn = e.onTarget === false ? ` <dim>– not found on ${escapeXml(sys.key)} in the last scan</dim>` : '';
+        return `Open <match>${escapeXml(e.alias ?? e.intent)}</match> ${escapeXml(e.title)}${topMatch.param ? ' ' + escapeXml(topMatch.param) : ''} ${where}${warn}`;
       }
       return `No match for "${escapeXml(parsed.query)}" – Enter opens the App Finder and copies it ${where}`;
     default:
