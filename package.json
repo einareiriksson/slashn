@@ -1,0 +1,13 @@
+{
+  "name": "sap-quickstart",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Omnibox launcher for SAP Fiori apps on S/4HANA Cloud Public Edition (type `s <system> <alias>`)",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/",
+    "seed:library": "node tools/fetch-apps-library.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "license": "MIT"
+}
