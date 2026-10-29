@@ -4,10 +4,50 @@
   "version": "0.1.0",
   "description": "Type `s <system> <alias>` in the address bar to jump straight to a Fiori app on an S/4HANA Cloud tenant.",
   "minimum_chrome_version": "120",
-  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
-  "background": { "service_worker": "src/background.js", "type": "module" },
-  "omnibox": { "keyword": "s" },
-  "permissions": ["storage", "offscreen", "clipboardWrite"],
-  "host_permissions": ["https://*.s4hana.cloud.sap/*"],
-  "options_ui": { "page": "src/options/options.html", "open_in_tab": true }
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "omnibox": {
+    "keyword": "s"
+  },
+  "permissions": [
+    "storage",
+    "offscreen",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://*.s4hana.cloud.sap/*"
+  ],
+  "options_ui": {
+    "page": "src/options/options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.s4hana.cloud.sap/ui*"
+      ],
+      "js": [
+        "src/content-main.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.s4hana.cloud.sap/ui*"
+      ],
+      "js": [
+        "src/content-isolated.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
 }
