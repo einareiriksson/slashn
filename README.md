@@ -64,8 +64,12 @@ Paste the full launchpad URL, for example `https://acd.finteq.io:8443/sap/bc/ui2
 
 ## Options page
 
-- **Systems**: settings (suggestion limit, auto-rescan interval, tab reuse), inline table (key, name, customer, host, env, default, optional launchpad path), per-row Open launchpad / Rescan now / Delete, last scan and app count, a warning when a system key collides with an alias, recent launches with **Pin as alias** for guesses and unresolved inputs. Export/import the whole config as JSON.
-- **Aliases**: merged static table with inline editing (editing a seed/library row creates a personal copy; deleting one hides it), CSV import (into a local import table or into your synced aliases) and export, a transaction-code view with "map t-code", and a per-system view of discovered apps with **Pin as alias** plus a list of seed/personal intents that the scanned tenant does not offer.
+Four sections in a sidebar:
+
+- **Systems**: one card per system (key, name, environment, host, edition, last scan and app count). Paste a launchpad URL to add one; **Edit** opens the full form in place (key, name, customer, environment, edition, host, scheme, launchpad path, query, default). Cards warn when a custom host lacks site access and when a system key collides with an alias.
+- **Aliases**: search-first. With nothing typed you see only your own aliases; a search covers all built-in and library rows (alias, t-code, app ID, intent, title) and shows up to 100 results. **Edit** opens a row editor; saving a built-in or library row stores a personal copy, **Hide** removes it from suggestions (restorable). **Add alias** takes an intent or an existing alias to copy, which is also how a legacy t-code gets mapped. CSV import and export live under a collapsed section.
+- **Discovered apps**: what each scanned system offers, with **Pin as alias**, a rescan button and a collapsed list of built-in or personal aliases the system does not offer.
+- **Settings**: suggestion limit, auto-rescan interval, tab reuse, JSON backup and restore, and recent launches with **Pin as alias** for guesses and unresolved inputs.
 
 CSV format: `alias,semanticObject,action,appId,tcodes,title,paramKey,editions`; `tcodes` and `editions` separated by `;`, editions ⊆ `public;private;onprem` (empty = all).
 

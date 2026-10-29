@@ -7,109 +7,150 @@
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
-  <header class="top">
-    <h1>slashn</h1>
-    <p class="hint">Omnibox: type <code>s</code>, space, then <code>[system] &lt;alias&gt; [value]</code>. <code>s ?</code> lists systems. The toolbar icon opens the same launcher as a popup.</p>
-    <nav class="tabs" role="tablist">
-      <button class="tab" data-tab="systems" role="tab">Systems</button>
-      <button class="tab" data-tab="aliases" role="tab">Aliases</button>
-    </nav>
-  </header>
-
-  <main>
-    <section id="tab-systems" class="panel" hidden>
-      <form id="add-url" class="toolbar">
-        <input type="text" name="url" id="add-url-input" placeholder="Paste a launchpad URL to add a system, e.g. https://my123456.s4hana.cloud.sap" size="64" autocomplete="off">
-        <button type="submit">Add from URL</button>
-        <span class="hint">Pasting adds immediately. Works for on-premise and private cloud too (port, path and sap-client are kept). Hosts outside *.s4hana.cloud.sap ask for site access once.</span>
-      </form>
-      <div class="toolbar">
-        <button data-action="add-system">Add system manually</button>
-        <label class="inline"><input type="checkbox" data-action="toggle-advanced"> Show scheme, path and query (on-premise)</label>
-        <span class="spacer"></span>
-        <button data-action="export-json">Export config (JSON)</button>
-        <label class="inline"><input type="checkbox" id="include-discovered"> include discovered apps</label>
-        <button data-action="import-json">Import config (JSON)</button>
-        <input type="file" id="file-json" accept="application/json,.json" hidden>
-      </div>
-      <div id="sys-errors" class="errors" hidden></div>
-      <div id="sys-warnings" class="warnings" hidden></div>
-      <div class="table-wrap"><table id="systems-table" class="grid"></table></div>
-      <p class="hint">Keys are what you type in the omnibox (lowercase). Edition decides which library apps are suggested: it is Public Cloud for <code>*.s4hana.cloud.sap</code> hosts and On-Premise otherwise; switch to Private Cloud by hand (same app set as On-Premise). Exactly one system is the default; otherwise the most recently used one is picked. Host has no scheme or path, e.g. <code>my123456.s4hana.cloud.sap</code> or <code>erp.example.com:8443</code>; on-premise path and <code>sap-client</code> live under the advanced columns.</p>
-
-      <h2>Settings</h2>
-      <form id="settings" class="row-form settings">
-        <label>Suggestions <input name="suggestionLimit" type="number" min="1" max="10" size="3"></label>
-        <label>Auto-rescan after <input name="autoScanDays" type="number" min="0" max="365" size="4"> days <span class="muted">(0 = every launchpad load)</span></label>
-        <label class="inline"><input name="reuseTabOnSameHost" type="checkbox"> Reuse the current tab when it is already on the target tenant</label>
-      </form>
-
-      <h2>Recent launches</h2>
-      <div class="table-wrap"><table id="recent-table" class="grid"></table></div>
-    </section>
-
-    <section id="tab-aliases" class="panel" hidden>
-      <nav class="subtabs">
-        <button class="subtab" data-sub="aliases">Static aliases</button>
-        <button class="subtab" data-sub="tcodes">Transaction codes</button>
-        <button class="subtab" data-sub="discovered">Discovered per system</button>
+  <div class="app">
+    <aside class="side">
+      <div class="brand"><span class="logo">/n</span><span>slashn</span></div>
+      <nav class="nav" role="tablist">
+        <button class="tab" data-tab="systems" role="tab">Systems</button>
+        <button class="tab" data-tab="aliases" role="tab">Aliases</button>
+        <button class="tab" data-tab="discovered" role="tab">Discovered apps</button>
+        <button class="tab" data-tab="settings" role="tab">Settings</button>
       </nav>
+      <details class="help">
+        <summary>How to type a command</summary>
+        <p>In the address bar type <code>s</code>, a space, then:</p>
+        <p><code>me21n</code> – open an app on the default system<br>
+        <code>tst me23n 4500001234</code> – another system, with a value<br>
+        <code>manage purchase</code> – search titles<br>
+        <code>acd</code> – launchpad home · <code>?</code> – list systems</p>
+        <p>The toolbar icon opens the same launcher as a popup.</p>
+      </details>
+    </aside>
 
-      <div id="sub-aliases" class="subpanel" hidden>
-        <div class="toolbar">
-          <input type="search" id="alias-filter" placeholder="Filter alias, intent, title, t-code…">
-          <select id="alias-source"><option value="">all sources</option><option value="user">mine</option><option value="import">imported</option><option value="seed">seed</option><option value="library">library</option></select>
-          <select id="alias-edition"><option value="">all editions</option><option value="public">Public Cloud</option><option value="private">Private Cloud</option><option value="onprem">On-Premise</option></select>
-          <span class="spacer"></span>
-          <button data-action="import-csv">Import CSV</button>
-          <select id="import-target" title="Where imported rows go"><option value="import">into local import table (this device)</option><option value="user">into my aliases (synced, small)</option></select>
-          <select id="import-mode"><option value="merge">merge</option><option value="replace">replace</option></select>
-          <input type="file" id="file-csv" accept=".csv,text/csv" hidden>
-          <button data-action="export-csv">Export CSV</button>
-        </div>
-        <form id="alias-add" class="row-form">
-          <input name="alias" placeholder="alias" required pattern="[a-z0-9][a-z0-9_.\/\-]*">
-          <input name="intent" placeholder="SemanticObject-action" required pattern="[A-Za-z0-9_]+-[A-Za-z0-9_]+">
-          <input name="title" placeholder="title">
-          <input name="appId" placeholder="app ID" size="8">
-          <input name="tcodes" placeholder="t-codes; separated" size="14">
-          <input name="paramKey" placeholder="param key" size="12">
-          <button type="submit">Add alias</button>
+    <main>
+      <!-- Systems -->
+      <section id="tab-systems" class="panel" hidden>
+        <header class="ph">
+          <h1>Systems</h1>
+          <p>The SAP systems you launch into. The key is what you type after <code>s</code>.</p>
+        </header>
+        <form id="add-url" class="addbox">
+          <input type="text" name="url" id="add-url-input" placeholder="Paste a launchpad URL to add a system…" autocomplete="off" spellcheck="false">
+          <button type="submit" class="primary">Add</button>
+          <button type="button" class="ghost" data-action="add-system">Add manually</button>
         </form>
-        <div id="alias-errors" class="errors" hidden></div>
-        <div id="hidden-list" class="hint"></div>
-        <div class="table-wrap"><table id="aliases-table" class="grid"></table></div>
-        <p class="hint">Editing a seed or library row creates a personal copy that shadows it; deleting one hides it. Personal rows and hidden markers sync across your Chrome profile. Seed and library rows are refreshed on every extension update.</p>
-      </div>
+        <div id="sys-warnings" class="notice warn" hidden></div>
+        <div id="systems-list" class="cards"></div>
+      </section>
 
-      <div id="sub-tcodes" class="subpanel" hidden>
-        <div class="toolbar">
-          <input type="search" id="tcode-filter" placeholder="Filter t-code or intent…">
+      <!-- Aliases -->
+      <section id="tab-aliases" class="panel" hidden>
+        <header class="ph">
+          <h1>Aliases</h1>
+          <p>Short names and t-codes for Fiori apps. Editing a built-in row makes a personal copy; hiding one removes it from suggestions.</p>
+        </header>
+        <div class="searchbar">
+          <input type="search" id="alias-filter" placeholder="Search alias, t-code, app ID, intent or title…" autocomplete="off">
+          <button type="button" class="primary" data-action="toggle-add-alias">Add alias</button>
         </div>
-        <form id="tcode-add" class="row-form">
-          <input name="tcode" placeholder="t-code (e.g. VA41)" required>
-          <input name="target" placeholder="alias or SemanticObject-action" required>
-          <button type="submit">Map t-code</button>
+        <div class="filters">
+          <div class="seg" id="alias-source" data-value="">
+            <button type="button" data-value="">All</button>
+            <button type="button" data-value="user">Mine</button>
+            <button type="button" data-value="seed">Built-in</button>
+            <button type="button" data-value="library">Library</button>
+          </div>
+          <select id="alias-edition" title="Edition">
+            <option value="">Any edition</option>
+            <option value="public">Public Cloud</option>
+            <option value="private">Private Cloud</option>
+            <option value="onprem">On-Premise</option>
+          </select>
+        </div>
+
+        <form id="alias-add" class="card form" hidden>
+          <h3>New alias</h3>
+          <div class="fields">
+            <label>Alias <input name="alias" placeholder="e.g. va41" required pattern="[a-z0-9][a-z0-9_.\/\-]*" autocomplete="off"></label>
+            <label class="wide">App <input name="target" placeholder="SemanticObject-action, or an existing alias to copy" required autocomplete="off"></label>
+            <label class="wide">Title <input name="title" placeholder="optional"></label>
+            <label>T-codes <input name="tcodes" placeholder="va41; va42"></label>
+            <label>App ID <input name="appId" placeholder="F1890"></label>
+            <label>Parameter <input name="paramKey" placeholder="SalesContract"></label>
+          </div>
+          <p class="muted small">Typing a t-code as the alias is how you map a legacy transaction. Parameter is the URL key a trailing value is sent as.</p>
+          <div class="formbar">
+            <button type="submit" class="primary">Save</button>
+            <button type="button" class="ghost" data-action="toggle-add-alias">Cancel</button>
+          </div>
         </form>
-        <div id="tcode-errors" class="errors" hidden></div>
-        <div class="table-wrap"><table id="tcodes-table" class="grid"></table></div>
-        <p class="hint">Unknown t-codes are also guessed from their prefix (ME2x → PurchaseOrder, VA4x → SalesContract…) and offered as <em>guess</em> when the target tenant actually has that intent. Low-confidence seed mappings disappear once a scan shows the tenant lacks the intent.</p>
-      </div>
 
-      <div id="sub-discovered" class="subpanel" hidden>
-        <div class="toolbar">
-          <select id="disc-host"></select>
-          <input type="search" id="disc-filter" placeholder="Filter intent, title, app ID…">
+        <div id="alias-errors" class="notice error" hidden></div>
+        <div id="alias-summary" class="muted small"></div>
+        <div id="aliases-list" class="rows"></div>
+        <div id="hidden-list" class="muted small"></div>
+
+        <details class="more">
+          <summary>Import or export CSV</summary>
+          <div class="morebody">
+            <button data-action="import-csv">Import CSV…</button>
+            <select id="import-target"><option value="import">into the local import table</option><option value="user">into my aliases (synced)</option></select>
+            <select id="import-mode"><option value="merge">merge</option><option value="replace">replace</option></select>
+            <input type="file" id="file-csv" accept=".csv,text/csv" hidden>
+            <span class="spacer"></span>
+            <button data-action="export-csv">Export all as CSV</button>
+          </div>
+          <p class="muted small">Columns: <code>alias, semanticObject, action, appId, tcodes, title, paramKey, editions</code>. Lists are <code>;</code>-separated.</p>
+        </details>
+      </section>
+
+      <!-- Discovered -->
+      <section id="tab-discovered" class="panel" hidden>
+        <header class="ph">
+          <h1>Discovered apps</h1>
+          <p>What each system actually offers your user, read from its launchpad. These rank first in suggestions.</p>
+        </header>
+        <div class="filters">
+          <div class="seg" id="disc-host"></div>
           <span class="spacer"></span>
-          <button data-action="rescan-selected">Rescan now</button>
-          <button data-action="clear-selected" class="danger">Clear</button>
+          <button data-action="rescan-selected">Rescan</button>
+          <button data-action="clear-selected" class="ghost danger">Clear</button>
         </div>
-        <div id="disc-meta" class="hint"></div>
-        <div class="table-wrap"><table id="disc-table" class="grid"></table></div>
-        <details id="disc-missing" class="missing"><summary></summary><div class="table-wrap"><table id="missing-table" class="grid"></table></div></details>
-      </div>
-    </section>
-  </main>
+        <div id="disc-meta" class="meta"></div>
+        <div class="searchbar"><input type="search" id="disc-filter" placeholder="Search intent, title or app ID…" autocomplete="off"></div>
+        <div id="disc-list" class="rows"></div>
+        <details id="disc-missing" class="more"><summary></summary><div id="missing-list" class="rows compact"></div></details>
+      </section>
+
+      <!-- Settings -->
+      <section id="tab-settings" class="panel" hidden>
+        <header class="ph"><h1>Settings</h1></header>
+        <form id="settings" class="card">
+          <h3>Behaviour</h3>
+          <label class="setting"><span>Suggestions shown in the address bar</span><input name="suggestionLimit" type="number" min="1" max="10"></label>
+          <label class="setting"><span>Rescan a system automatically after <em>n</em> days <small>(0 = on every launchpad load)</small></span><input name="autoScanDays" type="number" min="0" max="365"></label>
+          <label class="setting check"><input name="reuseTabOnSameHost" type="checkbox"><span>Reuse the current tab when it is already on the target system</span></label>
+        </form>
+
+        <div class="card">
+          <h3>Backup</h3>
+          <p class="muted small">Systems, personal aliases, hidden rows and settings as one JSON file.</p>
+          <div class="formbar">
+            <button data-action="export-json">Export…</button>
+            <label class="inline"><input type="checkbox" id="include-discovered"> include discovered apps</label>
+            <span class="spacer"></span>
+            <button data-action="import-json" class="ghost">Import and replace…</button>
+            <input type="file" id="file-json" accept="application/json,.json" hidden>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Recent launches</h3>
+          <div id="recent-list" class="rows compact"></div>
+        </div>
+      </section>
+    </main>
+  </div>
 
   <div id="toast" class="toast" hidden></div>
   <script type="module" src="options.js"></script>
