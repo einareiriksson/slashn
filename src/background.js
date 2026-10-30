@@ -1,7 +1,7 @@
 // slashn — MV3 service worker.
 // Omnibox handling, alias resolution, navigation, seed loading, discovery bookkeeping, rescan orchestration.
 import { MSG, LOG_PREFIX } from './messages.js';
-import { createStorage, isDefaultHost, originPattern } from './storage.js';
+import { createStorage, isDefaultHost, originPattern, sanitizeSystemInfo } from './storage.js';
 import {
   parseInput, mergeEntries, buildIndex, rank, buildUrl, homeUrl, appFinderUrl, isOnHost,
   formatSuggestion, formatSystemSuggestion, formatDefaultDescription, MATCH,
@@ -424,6 +424,7 @@ async function handleMessage(msg, sender) {
       await storage.setDiscovered(system.host, {
         scannedAt: new Date().toISOString(),
         ui5Version: typeof msg.ui5Version === 'string' ? msg.ui5Version : null,
+        system: sanitizeSystemInfo(msg.system),
         methods: msg.methods && typeof msg.methods === 'object' ? msg.methods : {},
         errors: Array.isArray(msg.errors) ? msg.errors.slice(0, 20).map(String) : [],
         entries,

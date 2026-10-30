@@ -195,6 +195,22 @@
     return map;
   }
 
+  /** The same fields the launchpad's About dialog shows (sap.ushell.Container.getLogonSystem()). */
+  function readSystemInfo(errors) {
+    try {
+      const sys = window.sap.ushell.Container.getLogonSystem && window.sap.ushell.Container.getLogonSystem();
+      if (!sys) return null;
+      const out = {};
+      for (const [key, getter] of [['productName', 'getProductName'], ['productVersion', 'getProductVersion'], ['systemName', 'getSystemName'], ['systemRole', 'getSystemRole'], ['tenantRole', 'getTenantRole'], ['client', 'getClient']]) {
+        try { const v = typeof sys[getter] === 'function' ? sys[getter]() : undefined; if (typeof v === 'string' && v.trim()) out[key] = v.trim(); } catch { /* optional getter */ }
+      }
+      return Object.keys(out).length ? out : null;
+    } catch (e) {
+      errors.push('system info: ' + (e && e.message ? e.message : e));
+      return null;
+    }
+  }
+
   async function runDiscovery() {
     const started = performance.now();
     const methods = {};
@@ -233,7 +249,8 @@
       if (entries.length >= MAX_ENTRIES) break;
     }
     const ui5Version = (() => { try { return window.sap.ui.version; } catch { return null; } })();
-    log('discovery done', entries.length, 'intents in', Math.round(performance.now() - started), 'ms', methods, errors.length ? errors : '');
-    return { entries, ui5Version, methods, errors, scannedAt: new Date().toISOString() };
+    const system = readSystemInfo(errors);
+    log('discovery done', entries.length, 'intents in', Math.round(performance.now() - started), 'ms', methods, system, errors.length ? errors : '');
+    return { entries, ui5Version, system, methods, errors, scannedAt: new Date().toISOString() };
   }
 })();

@@ -9,6 +9,13 @@
   const LOG = '[SAPQS]';
   const INTENT_RE = /^[A-Za-z0-9_]+-[A-Za-z0-9_]+$/;
   const MAX_ENTRIES = 5000;
+  const SYSTEM_INFO_FIELDS = ['productName', 'productVersion', 'systemName', 'systemRole', 'tenantRole', 'client'];
+  const systemInfo = (raw) => {
+    if (!raw || typeof raw !== 'object') return null;
+    const out = {};
+    for (const k of SYSTEM_INFO_FIELDS) if (typeof raw[k] === 'string' && raw[k].trim()) out[k] = raw[k].trim().slice(0, 120);
+    return Object.keys(out).length ? out : null;
+  };
   const log = (...a) => console.debug(LOG, ...a);
 
   if (window.__sapqsIsoLoaded) return;
@@ -85,6 +92,7 @@
         host: location.hostname,
         entries,
         ui5Version: typeof d.ui5Version === 'string' ? d.ui5Version : null,
+        system: systemInfo(d.system),
         methods: d.methods && typeof d.methods === 'object' ? d.methods : {},
         errors: Array.isArray(d.errors) ? d.errors.map(String) : [],
       }).then((r) => log('discovery stored', r));

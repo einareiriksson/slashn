@@ -1,6 +1,6 @@
 // slashn — toolbar popup. Same launcher as the omnibox, driven through the service worker.
 import { MSG } from '../messages.js';
-import { createStorage, systemFromUrl, looksLikeLaunchpad, isDefaultHost, originPattern } from '../storage.js';
+import { createStorage, systemFromUrl, looksLikeLaunchpad, isDefaultHost, originPattern, sanitizeSystemInfo, editionFromSystemInfo } from '../storage.js';
 
 const storage = createStorage();
 
@@ -21,14 +21,29 @@ let recent = []; // all recent launches; the list shows only those on the curren
 
 const fmtDate = (iso) => { try { return iso ? new Date(iso).toLocaleDateString() : ''; } catch { return ''; } };
 
-/** activeTab lets us ask the page itself whether it is a Fiori launchpad. */
+let probed = null; // { launchpad: bool, system: About-dialog fields|null } for the active tab
+
+/** activeTab lets us ask the page itself whether it is a Fiori launchpad, and read what its About dialog would show. */
 async function probeLaunchpad(tabId) {
+  if (probed) return probed;
   try {
-    const [r] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: () => Boolean(window.sap && window.sap.ushell) });
-    return Boolean(r?.result);
+    const [r] = await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', func: () => {
+      const c = window.sap && window.sap.ushell && window.sap.ushell.Container;
+      if (!c) return { launchpad: false, system: null };
+      const out = {};
+      try {
+        const sys = c.getLogonSystem && c.getLogonSystem();
+        for (const [k, g] of [['productName', 'getProductName'], ['productVersion', 'getProductVersion'], ['systemName', 'getSystemName'], ['systemRole', 'getSystemRole'], ['tenantRole', 'getTenantRole'], ['client', 'getClient']]) {
+          try { const v = sys && typeof sys[g] === 'function' ? sys[g]() : undefined; if (typeof v === 'string') out[k] = v; } catch { /* optional */ }
+        }
+      } catch { /* no logon system */ }
+      return { launchpad: true, system: out };
+    } });
+    probed = { launchpad: Boolean(r?.result?.launchpad), system: sanitizeSystemInfo(r?.result?.system) };
   } catch {
-    return false;
+    probed = { launchpad: false, system: null };
   }
+  return probed;
 }
 
 async function init() {
@@ -59,7 +74,7 @@ async function describeTab(snap) {
     input.placeholder = `alias [value] – or <system> alias for another system`;
     return;
   }
-  const isSap = tab?.url && /^https?:/.test(tab.url) && (looksLikeLaunchpad(tab.url) || await probeLaunchpad(tab.id));
+  const isSap = tab?.url && /^https?:/.test(tab.url) && (looksLikeLaunchpad(tab.url) || (await probeLaunchpad(tab.id)).launchpad);
   if (isSap) {
     $('#current').innerHTML = `SAP launchpad detected: <b>${esc(host)}</b> <button id="add-current" class="small">Add as system</button>`;
     $('#add-current').addEventListener('click', () => addCurrent(snap).catch((e) => { $('#hint').textContent = 'Could not add: ' + (e.message || e); }));
@@ -73,6 +88,9 @@ async function describeTab(snap) {
 async function addCurrent(snap) {
   const sys = systemFromUrl(tab.url, snap.systems);
   if (!sys) throw new Error('unrecognised URL');
+  const info = (await probeLaunchpad(tab.id)).system; // About-dialog product version beats the hostname guess
+  const detected = editionFromSystemInfo(info);
+  if (detected) sys.edition = detected;
   // permission request must start inside the click gesture
   const access = isDefaultHost(sys.host) || !chrome.permissions?.request ? Promise.resolve(true) : chrome.permissions.request({ origins: [originPattern(sys)] }).catch(() => false);
   const systems = [...(await storage.getSystems()), sys];

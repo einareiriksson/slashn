@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  systemFromUrl, parseLaunchpadUrl, isDefaultHost, guessEdition, looksLikeLaunchpad,
+  systemFromUrl, parseLaunchpadUrl, isDefaultHost, guessEdition, looksLikeLaunchpad, editionFromSystemInfo, sanitizeSystemInfo, describeSystemInfo,
   chunkArray, byteSize, readChunked, writeChunked, migrateSnapshot, memoryArea, createStorage, buildSeedEntries, validateSystems, normalizeSystem, SCHEMA_VERSION, KEYS,
 } from '../src/storage.js';
 
@@ -73,10 +73,11 @@ test('createStorage: typed api, migrate, export/import round-trip', async () => 
   assert.equal(await s.getPendingRescan('my1.s4hana.cloud.sap'), true);
   await s.setPendingRescan('my1.s4hana.cloud.sap', false);
   assert.equal(await s.getPendingRescan('my1.s4hana.cloud.sap'), false);
-  assert.deepEqual((await s.getScanMeta())['my1.s4hana.cloud.sap'], { lastScanned: '2026-01-01T00:00:00Z', appCount: 1 });
-  // Shell-startGUI exists on Public Cloud tenants too, so the scan must not infer an edition from it.
-  await s.setDiscovered('op.example', { scannedAt: '2026-01-01T00:00:00Z', entries: [{ intent: 'Shell-startGUI', title: 'gui' }] });
-  assert.equal('detectedEdition' in (await s.getScanMeta())['op.example'], false);
+  assert.deepEqual((await s.getScanMeta())['my1.s4hana.cloud.sap'], { lastScanned: '2026-01-01T00:00:00Z', appCount: 1, system: null, detectedEdition: null });
+  // Shell-startGUI exists on Public Cloud tenants too, so the intents never decide the edition; the About-dialog product does.
+  await s.setDiscovered('op.example', { scannedAt: '2026-01-01T00:00:00Z', entries: [{ intent: 'Shell-startGUI', title: 'gui' }], system: { productName: 'SAP S/4HANA', productVersion: 'SAP S/4HANA 2023 FPS02', systemRole: 'Development System', junk: 'x' } });
+  assert.deepEqual((await s.getScanMeta())['op.example'].system, { productName: 'SAP S/4HANA', productVersion: 'SAP S/4HANA 2023 FPS02', systemRole: 'Development System' });
+  assert.equal((await s.getScanMeta())['op.example'].detectedEdition, 'onprem');
   await assert.rejects(() => s.setSystems([{ key: 'x', host: 'bad host' }]));
 
   const exported = await s.exportJson();
@@ -160,4 +161,19 @@ test('looksLikeLaunchpad heuristics', () => {
   assert.equal(looksLikeLaunchpad('https://www.google.com/'), false);
   assert.equal(looksLikeLaunchpad('chrome://extensions'), false);
   assert.equal(looksLikeLaunchpad('nonsense'), false);
+});
+
+test('editionFromSystemInfo classifies About-dialog product strings conservatively', () => {
+  assert.equal(editionFromSystemInfo({ productName: 'SAP S/4HANA Cloud', productVersion: 'SAP S/4HANA CLOUD 2508' }), 'public');
+  assert.equal(editionFromSystemInfo({ productVersion: 'SAP S/4HANA Cloud Public Edition' }), 'public');
+  assert.equal(editionFromSystemInfo({ productVersion: 'SAP S/4HANA Cloud Private Edition 2023' }), 'private');
+  assert.equal(editionFromSystemInfo({ productVersion: 'SAP S/4HANA 2023 FPS01' }), 'onprem');
+  assert.equal(editionFromSystemInfo({ productVersion: 'SAP S/4HANA 1909' }), 'onprem');
+  assert.equal(editionFromSystemInfo({ productVersion: 'SAP S/4HANA Cloud' }), null, 'cloud without a release or "public" is not enough');
+  assert.equal(editionFromSystemInfo({ productVersion: 'S4CORE 109' }), null);
+  assert.equal(editionFromSystemInfo(null), null);
+  assert.equal(sanitizeSystemInfo({ productVersion: '  x  ', client: 100, nope: 'y' })?.productVersion, 'x');
+  assert.equal(sanitizeSystemInfo({}), null);
+  assert.equal(describeSystemInfo({ productName: 'SAP S/4HANA Cloud', productVersion: 'SAP S/4HANA CLOUD 2508' }), 'SAP S/4HANA CLOUD 2508');
+  assert.equal(describeSystemInfo({ productName: 'SAP S/4HANA', productVersion: '2023' }), 'SAP S/4HANA 2023');
 });

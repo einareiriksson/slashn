@@ -36,6 +36,35 @@ export function guessEdition(host) {
   const h = String(host || '').toLowerCase().replace(/:\d+$/, '');
   return /\.s4hana\.cloud\.sap$|\.s4hana\.ondemand\.com$/.test(h) ? 'public' : 'onprem';
 }
+export const SYSTEM_INFO_FIELDS = Object.freeze(['productName', 'productVersion', 'systemName', 'systemRole', 'tenantRole', 'client']);
+/** The fields the launchpad's About dialog shows, as reported by discovery; strings only, bounded. */
+export function sanitizeSystemInfo(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const out = {};
+  for (const k of SYSTEM_INFO_FIELDS) if (typeof raw[k] === 'string' && raw[k].trim()) out[k] = raw[k].trim().slice(0, 120);
+  return Object.keys(out).length ? out : null;
+}
+/** One line like the About dialog's "Product version", e.g. "SAP S/4HANA Cloud 2508". */
+export function describeSystemInfo(info) {
+  if (!info) return '';
+  const v = info.productVersion || '';
+  const n = info.productName || '';
+  return v.toLowerCase().includes(n.toLowerCase()) ? v : [n, v].filter(Boolean).join(' ');
+}
+/**
+ * Edition from the About dialog's product name/version. Conservative: Public Cloud needs "cloud" plus either "public"
+ * or a YYMM release (2508); "private" wins over "cloud"; a year release (2023, 1909) or FPS/SP marks the classic
+ * stack, which is private cloud or on-premise – the two cannot be told apart, so 'onprem' here means "not Public Cloud".
+ */
+export function editionFromSystemInfo(info) {
+  const text = [info?.productName, info?.productVersion].filter((x) => typeof x === 'string').join(' ');
+  if (!text) return null;
+  if (/private/i.test(text)) return 'private';
+  const yymm = /\b2\d(0[1-9]|1[0-2])\b/.test(text);
+  if (/cloud/i.test(text)) return /public/i.test(text) || yymm ? 'public' : null;
+  if (/S\/?4\s?HANA/i.test(text) && /\b(19|20)\d\d\b|\bFPS?\s?\d|\bSPS?\s?\d/i.test(text)) return 'onprem';
+  return null;
+}
 export const HOST_RE = /^[a-z0-9.-]+(:\d{1,5})?$/;
 export const KEY_RE = /^[a-z0-9][a-z0-9_-]*$/;
 export const ALIAS_RE = /^[a-z0-9][a-z0-9_./-]*$/;
@@ -274,8 +303,9 @@ export function createStorage(areas = null) {
       const all = await one(local, KEYS.DISCOVERED, {});
       all[host] = record;
       const meta = await one(local, KEYS.SCAN_META, {});
-      // No edition inference here: Public Cloud tenants expose Shell-startGUI too (SAP GUI for HTML apps), so it is not a tell.
-      meta[host] = { lastScanned: record.scannedAt, appCount: (record.entries || []).length };
+      // Edition comes from the About-dialog product version, never from the intents (Shell-startGUI exists on Public Cloud too).
+      const info = sanitizeSystemInfo(record.system);
+      meta[host] = { lastScanned: record.scannedAt, appCount: (record.entries || []).length, system: info, detectedEdition: editionFromSystemInfo(info) };
       await local.set({ [KEYS.DISCOVERED]: all, [KEYS.SCAN_META]: meta });
     },
     async clearDiscovered(host) {

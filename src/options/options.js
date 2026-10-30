@@ -1,5 +1,5 @@
 // slashn — options page.
-import { createStorage, validateSystems, normalizeSystem, systemFromUrl, isDefaultHost, originPattern, ENVS, EDITIONS, EDITION_LABELS, ALIAS_RE } from '../storage.js';
+import { createStorage, validateSystems, normalizeSystem, systemFromUrl, isDefaultHost, originPattern, describeSystemInfo, ENVS, EDITIONS, EDITION_LABELS, ALIAS_RE } from '../storage.js';
 import { mergeEntries, normalizeEntry, homeUrl, splitIntent, entryKey, appliesToEdition } from '../resolver.js';
 import { aliasesFromCsv, aliasesToCsv } from '../csv.js';
 import { MSG } from '../messages.js';
@@ -202,6 +202,11 @@ function systemCard(s) {
   const custom = !isDefaultHost(s.host);
   const noAccess = custom && ui.access[s.host] === false;
   const status = ui.rescanStatus[s.host];
+  const product = describeSystemInfo(meta?.system);
+  const roles = [meta?.system?.systemRole, meta?.system?.tenantRole].filter(Boolean).join(' · ');
+  const detected = meta?.detectedEdition;
+  const editionNote = detected && ((detected === 'public') !== (s.edition === 'public'))
+    ? ` <span class="badge warn" title="The launchpad's About dialog reports: ${esc(product || 'unknown product')}">scan says ${detected === 'public' ? 'Public Cloud' : 'not Public Cloud'}</span>` : '';
   const scan = status ? `<span>${esc(status)}</span>`
     : meta?.lastScanned ? `<span title="${esc(fmtDateTime(meta.lastScanned))}">Scanned ${esc(ago(meta.lastScanned))} · ${esc(meta.appCount)} apps</span> <button class="linkbtn" data-action="view-discovered" data-host="${esc(s.host)}">View</button>`
     : '<span>Not scanned yet</span>';
@@ -219,7 +224,8 @@ function systemCard(s) {
     </div>
     <div class="card-meta">
       <span>${esc(s.host)}${s.launchpadPath && s.launchpadPath !== '/ui' ? esc(s.launchpadPath) : ''}${s.launchpadQuery ? '?' + esc(s.launchpadQuery) : ''}</span>
-      <span>${esc(EDITION_LABELS[s.edition] || s.edition)}</span>
+      <span>${esc(EDITION_LABELS[s.edition] || s.edition)}${editionNote}</span>
+      ${product ? `<span title="From the launchpad's About dialog${roles ? ' · ' + esc(roles) : ''}">${esc(product)}</span>` : ''}
       ${scan}
     </div>
     ${noAccess ? `<div class="notice warn inline"><span>slashn has no access to this site yet, so it cannot discover apps or reuse its tabs.</span><button class="sm" data-action="grant-access" data-host="${esc(s.host)}">Grant site access</button></div>` : ''}
@@ -401,7 +407,7 @@ function renderDiscovered() {
   const q = ($('#disc-filter').value || '').trim().toLowerCase();
   if (rec) {
     const details = `${esc(JSON.stringify(rec.methods || {}, null, 1))}${rec.errors?.length ? `\nWarnings:\n${esc(rec.errors.join('\n'))}` : ''}`;
-    $('#disc-meta').innerHTML = `<b>${esc(sys?.key || host)}</b> scanned ${esc(ago(rec.scannedAt))} (${esc(fmtDateTime(rec.scannedAt))}) · ${esc(rec.entries.length)} apps${rec.ui5Version ? ` · UI5 ${esc(rec.ui5Version)}` : ''} · <details><summary>details</summary><pre>${details}</pre></details>`;
+    $('#disc-meta').innerHTML = `<b>${esc(sys?.key || host)}</b> scanned ${esc(ago(rec.scannedAt))} (${esc(fmtDateTime(rec.scannedAt))}) · ${esc(rec.entries.length)} apps${describeSystemInfo(rec.system) ? ` · ${esc(describeSystemInfo(rec.system))}` : ''}${rec.ui5Version ? ` · UI5 ${esc(rec.ui5Version)}` : ''} · <details><summary>details</summary><pre>${details}</pre></details>`;
   } else {
     $('#disc-meta').innerHTML = host ? `<b>${esc(sys?.key || host)}</b> has not been scanned yet. Open its launchpad, or click <b>Rescan</b>, and slashn reads the apps your user can reach.` : 'Add a system first.';
   }
