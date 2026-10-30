@@ -12,10 +12,12 @@ let items = [];
 let selected = 0;
 let seq = 0;
 let contextHost = null; // host of the active tab when it is a registered system
+let contextKey = null;
 let tab = null;
 let currentSystem = null; // system the current matches were resolved on
 let pendingForce = null; // text of a launch the user must confirm (target reported unavailable)
 let liveSeq = 0;
+let recent = []; // all recent launches; the list shows only those on the current tab's system
 
 const fmtDate = (iso) => { try { return iso ? new Date(iso).toLocaleDateString() : ''; } catch { return ''; } };
 
@@ -39,8 +41,9 @@ async function init() {
   const state = await send({ type: MSG.GET_STATE });
   const snap = state?.snapshot || { systems: [], recent: [] };
   [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  recent = snap.recent || [];
   await describeTab(snap);
-  renderRecent(snap.recent || []);
+  renderRecent();
   resolve(input.value); // not '' – the user may already have typed while the tab probe ran
 }
 
@@ -50,6 +53,7 @@ async function describeTab(snap) {
   try { host = tab?.url ? new URL(tab.url).host.toLowerCase() : ''; } catch { host = ''; }
   const current = snap.systems.find((s) => s.host === host);
   contextHost = current ? current.host : null;
+  contextKey = current ? current.key : null;
   if (current) {
     $('#current').innerHTML = `Searching <b>${esc(current.key)}</b> ${esc(current.name || '')}<span class="env ${esc(current.env)}">${esc(current.env)}</span>`;
     input.placeholder = `alias [value] – or <system> alias for another system`;
@@ -76,6 +80,7 @@ async function addCurrent(snap) {
   const granted = await access;
   const state = await send({ type: MSG.GET_STATE });
   await describeTab(state?.snapshot || { systems, recent: [] });
+  renderRecent();
   $('#hint').textContent = granted ? `Added "${sys.key}" (${sys.host}); reload the tab once to start discovery` : `Added "${sys.key}" – site access not granted, discovery disabled until you grant it in options`;
   resolve($('#q').value);
 }
@@ -122,10 +127,14 @@ function renderList() {
   });
 }
 
-function renderRecent(recent) {
+/** On a registered system only that system's launches are listed; elsewhere every system's, tagged with its key. */
+function renderRecent() {
   const ul = $('#recent');
-  const list = recent.slice(0, 10);
-  ul.innerHTML = list.map((r, i) => `<li data-i="${i}"><span class="key">${esc(r.input)}</span><span class="title">${esc(r.title)}</span><span class="tag">${esc(r.systemKey)}</span></li>`).join('') || '<li class="empty">Nothing launched yet.</li>';
+  const current = contextHost ? recent.filter((r) => r.host === contextHost) : recent;
+  const list = current.slice(0, 10);
+  $('#recent-title').textContent = contextKey ? `Recent on ${contextKey}` : 'Recent';
+  ul.innerHTML = list.map((r, i) => `<li data-i="${i}"><span class="key">${esc(r.input)}</span><span class="title">${esc(r.title)}</span>${contextHost ? '' : `<span class="tag">${esc(r.systemKey)}</span>`}</li>`).join('')
+    || `<li class="empty">${contextHost ? 'Nothing launched on this system yet.' : 'Nothing launched yet.'}</li>`;
   ul.querySelectorAll('li[data-i]').forEach((li) => {
     li.addEventListener('click', async (ev) => {
       const r = list[Number(li.dataset.i)];
