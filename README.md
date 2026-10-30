@@ -29,7 +29,7 @@ Open the launchpad on a registered tenant once and the extension discovers every
 
 ## How aliases resolve
 
-Each system has an **edition** (Public Cloud, Private Cloud, On-Premise). It defaults from the host (`*.s4hana.cloud.sap` → Public Cloud, otherwise On-Premise) and is editable; the library's apps are tagged with the editions they exist in and only matching ones are suggested, while seed, imported and personal aliases always apply. A scan that finds `Shell-startGUI` on a system marked Public Cloud (or vice versa) is flagged on the Systems tab, since the hostname cannot tell private cloud from on-premise.
+Each system has an **edition** (Public Cloud, Private Cloud, On-Premise). It defaults from the host (`*.s4hana.cloud.sap` → Public Cloud, otherwise On-Premise) and is editable; the library's apps are tagged with the editions they exist in and only matching ones are suggested, while seed, imported and personal aliases always apply. The hostname cannot tell private cloud from on-premise, and a scan cannot tell either (Public Cloud tenants expose `Shell-startGUI` for their SAP GUI for HTML apps too), so set it by hand for custom hosts.
 
 Candidates are merged from four tiers, by precedence: **your aliases** (synced) > **discovered on the tenant** > **seed** (`src/seed/aliases.csv`, `src/seed/tcodes.csv`) > **library** (`src/seed/library.csv`, ~17,000 S/4HANA apps from the Fiori Apps Reference Library, tagged by edition). Ranking: exact alias > exact t-code > exact app ID > exact intent > t-code guess > key prefix > title prefix > title words. Entries discovered on the target tenant win ties.
 

@@ -202,8 +202,6 @@ function systemCard(s) {
   const custom = !isDefaultHost(s.host);
   const noAccess = custom && ui.access[s.host] === false;
   const status = ui.rescanStatus[s.host];
-  const editionNote = meta?.detectedEdition && ((meta.detectedEdition === 'public') !== (s.edition === 'public'))
-    ? ` <span class="badge warn" title="${meta.detectedEdition === 'public' ? 'The scan found no generic GUI launcher, which suggests Public Cloud' : 'The scan found Shell-startGUI, which Public Cloud does not expose'}">scan says ${meta.detectedEdition === 'public' ? 'Public Cloud' : 'not Public Cloud'}</span>` : '';
   const scan = status ? `<span>${esc(status)}</span>`
     : meta?.lastScanned ? `<span title="${esc(fmtDateTime(meta.lastScanned))}">Scanned ${esc(ago(meta.lastScanned))} · ${esc(meta.appCount)} apps</span> <button class="linkbtn" data-action="view-discovered" data-host="${esc(s.host)}">View</button>`
     : '<span>Not scanned yet</span>';
@@ -221,7 +219,7 @@ function systemCard(s) {
     </div>
     <div class="card-meta">
       <span>${esc(s.host)}${s.launchpadPath && s.launchpadPath !== '/ui' ? esc(s.launchpadPath) : ''}${s.launchpadQuery ? '?' + esc(s.launchpadQuery) : ''}</span>
-      <span>${esc(EDITION_LABELS[s.edition] || s.edition)}${editionNote}</span>
+      <span>${esc(EDITION_LABELS[s.edition] || s.edition)}</span>
       ${scan}
     </div>
     ${noAccess ? `<div class="notice warn inline"><span>slashn has no access to this site yet, so it cannot discover apps or reuse its tabs.</span><button class="sm" data-action="grant-access" data-host="${esc(s.host)}">Grant site access</button></div>` : ''}

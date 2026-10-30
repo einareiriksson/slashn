@@ -274,9 +274,8 @@ export function createStorage(areas = null) {
       const all = await one(local, KEYS.DISCOVERED, {});
       all[host] = record;
       const meta = await one(local, KEYS.SCAN_META, {});
-      // Public Cloud never exposes the generic GUI/WDA launchers; their presence means private cloud or on-premise.
-      const hasGui = (record.entries || []).some((e) => /^Shell-(startGUI|startWDA)$/i.test(e.intent));
-      meta[host] = { lastScanned: record.scannedAt, appCount: (record.entries || []).length, detectedEdition: hasGui ? 'onprem' : 'public' };
+      // No edition inference here: Public Cloud tenants expose Shell-startGUI too (SAP GUI for HTML apps), so it is not a tell.
+      meta[host] = { lastScanned: record.scannedAt, appCount: (record.entries || []).length };
       await local.set({ [KEYS.DISCOVERED]: all, [KEYS.SCAN_META]: meta });
     },
     async clearDiscovered(host) {

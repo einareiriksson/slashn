@@ -73,9 +73,10 @@ test('createStorage: typed api, migrate, export/import round-trip', async () => 
   assert.equal(await s.getPendingRescan('my1.s4hana.cloud.sap'), true);
   await s.setPendingRescan('my1.s4hana.cloud.sap', false);
   assert.equal(await s.getPendingRescan('my1.s4hana.cloud.sap'), false);
-  assert.deepEqual((await s.getScanMeta())['my1.s4hana.cloud.sap'], { lastScanned: '2026-01-01T00:00:00Z', appCount: 1, detectedEdition: 'public' });
+  assert.deepEqual((await s.getScanMeta())['my1.s4hana.cloud.sap'], { lastScanned: '2026-01-01T00:00:00Z', appCount: 1 });
+  // Shell-startGUI exists on Public Cloud tenants too, so the scan must not infer an edition from it.
   await s.setDiscovered('op.example', { scannedAt: '2026-01-01T00:00:00Z', entries: [{ intent: 'Shell-startGUI', title: 'gui' }] });
-  assert.equal((await s.getScanMeta())['op.example'].detectedEdition, 'onprem');
+  assert.equal('detectedEdition' in (await s.getScanMeta())['op.example'], false);
   await assert.rejects(() => s.setSystems([{ key: 'x', host: 'bad host' }]));
 
   const exported = await s.exportJson();
