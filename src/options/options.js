@@ -1,5 +1,5 @@
 // slashn — options page.
-import { createStorage, validateSystems, normalizeSystem, systemFromUrl, isDefaultHost, originPattern, describeSystemInfo, ENVS, EDITIONS, EDITION_LABELS, ALIAS_RE } from '../storage.js';
+import { createStorage, validateSystems, normalizeSystem, systemFromUrl, isDefaultHost, originPattern, describeSystemInfo, looksLikeLaunchpad, ENVS, EDITIONS, EDITION_LABELS, ALIAS_RE } from '../storage.js';
 import { mergeEntries, normalizeEntry, homeUrl, splitIntent, entryKey, appliesToEdition } from '../resolver.js';
 import { aliasesFromCsv, aliasesToCsv } from '../csv.js';
 import { MSG } from '../messages.js';
@@ -18,6 +18,7 @@ const ui = {
   editHost: null, sysDraft: null, sysErrors: [],   // system being edited (host, or NEW) and its unsaved field values
   aliasSource: '', editAlias: null, aliasDraft: null, showAdd: false,
   discHost: null, rescanStatus: {}, access: {},
+  askScan: null, // host of a system just added: its card offers a first scan until answered
 };
 
 // ---------------------------------------------------------------- helpers
@@ -160,13 +161,72 @@ function render() {
   renderDiscovered();
   renderSettings();
   renderRecent();
+  if (ui.tab === 'tabs') renderTabs().catch((e) => toast('Could not list tabs: ' + (e.message || e)));
 }
+
+// ---- open SAP tabs
+
+/** [{ tab, system|null, intent }] for every tab on a registered host or a launchpad-looking page, current window first. */
+async function sapTabs() {
+  const [tabs, current] = await Promise.all([chrome.tabs.query({}), chrome.windows.getCurrent().catch(() => null)]);
+  const out = [];
+  for (const t of tabs) {
+    if (!t.url || !/^https?:/i.test(t.url)) continue;
+    let host = '';
+    try { host = new URL(t.url).host.toLowerCase(); } catch { continue; }
+    const system = systemByHost(host);
+    if (!system && !looksLikeLaunchpad(t.url)) continue;
+    let intent = '';
+    try { intent = decodeURIComponent(new URL(t.url).hash.replace(/^#/, '')); } catch { intent = new URL(t.url).hash.replace(/^#/, ''); }
+    out.push({ tab: t, system, host, intent });
+  }
+  const windows = [...new Set(out.map((x) => x.tab.windowId))];
+  const windowNo = new Map(windows.map((w, i) => [w, i + 1]));
+  out.sort((a, b) => (a.tab.windowId === current?.id ? 0 : 1) - (b.tab.windowId === current?.id ? 0 : 1) || a.tab.windowId - b.tab.windowId || a.tab.index - b.tab.index);
+  return { rows: out, windowNo, currentWindow: current?.id ?? null };
+}
+
+async function renderTabs() {
+  const { rows, windowNo, currentWindow } = await sapTabs();
+  $('#tabs-count').textContent = rows.length ? `${rows.length} SAP tab${rows.length === 1 ? '' : 's'} in ${windowNo.size} window${windowNo.size === 1 ? '' : 's'}` : '';
+  $('#tabs-list').innerHTML = rows.map(({ tab, system, host, intent }) => `<div class="row tabrow" data-action="goto-tab" data-id="${esc(tab.id)}" data-window="${esc(tab.windowId)}" role="button" tabindex="0" title="Switch to this tab">
+    <div class="row-main">
+      <span class="alias">${esc(system ? system.key : 'launchpad')}</span>
+      <span class="title">${esc(tab.title || tab.url)}</span>
+      ${system ? `<span class="badge ${esc(system.env)}">${esc(system.env)}</span>` : '<span class="badge outline">not registered</span>'}
+      ${tab.active ? '<span class="badge ok">active</span>' : ''}
+      <span class="actions"><button class="sm" type="button" data-action="goto-tab" data-id="${esc(tab.id)}" data-window="${esc(tab.windowId)}">Go to tab</button><button class="sm ghost" type="button" data-action="close-tab" data-id="${esc(tab.id)}">Close</button></span>
+    </div>
+    <div class="row-sub"><span><code>${esc(intent || host)}</code></span><span>${esc(host)}</span>${windowNo.size > 1 ? `<span>window ${esc(windowNo.get(tab.windowId))}${tab.windowId === currentWindow ? ' (this one)' : ''}</span>` : ''}</div>
+  </div>`).join('') || '<div class="row empty-row">No SAP launchpad is open in any window.</div>';
+}
+
+async function gotoTab(id, windowId) {
+  await chrome.tabs.update(id, { active: true });
+  if (windowId != null) await chrome.windows.update(windowId, { focused: true }).catch(() => {});
+}
+
+let tabsTimer = null;
+const tabsChanged = () => {
+  if (ui.tab !== 'tabs') return;
+  clearTimeout(tabsTimer);
+  tabsTimer = setTimeout(() => renderTabs().catch(() => {}), 250);
+};
+chrome.tabs?.onUpdated?.addListener((id, info) => { if (info.url || info.title || info.status === 'complete') tabsChanged(); });
+chrome.tabs?.onRemoved?.addListener(tabsChanged);
+chrome.tabs?.onActivated?.addListener(tabsChanged);
+chrome.tabs?.onCreated?.addListener(tabsChanged);
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Enter' || !ev.target.classList?.contains('tabrow')) return;
+  ev.preventDefault();
+  gotoTab(Number(ev.target.dataset.id), Number(ev.target.dataset.window)).catch((e) => toast('Could not switch: ' + (e.message || e)));
+});
 
 // ---- systems
 
 function keyCollisionWarnings(systems) {
   const aliases = new Map(staticEntries().filter((e) => e.alias).map((e) => [e.alias, e]));
-  return systems.filter((s) => aliases.has(s.key)).map((s) => `System key "${s.key}" is also an alias (${aliases.get(s.key).intent}). "s ${s.key}" opens the launchpad; type "s ${systems.find((x) => x.isDefault)?.key || '<system>'} ${s.key}" for the app, or rename one of them.`);
+  return systems.filter((s) => aliases.has(s.key.toLowerCase())).map((s) => `System key "${s.key}" is also an alias (${aliases.get(s.key.toLowerCase()).intent}). "s ${s.key}" opens the launchpad; type "s ${systems.find((x) => x.isDefault)?.key || '<system>'} ${s.key}" for the app, or rename one of them.`);
 }
 
 function systemForm(s, isNew) {
@@ -174,7 +234,7 @@ function systemForm(s, isNew) {
   const opt = (list, cur, labels) => list.map((x) => `<option value="${esc(x)}" ${x === cur ? 'selected' : ''}>${esc(labels ? labels[x] : x)}</option>`).join('');
   return `<form class="form editor" data-sys-form="${esc(isNew ? NEW : s.host)}">
     <div class="fields">
-      <label>Key <input name="key" value="${esc(v.key)}" placeholder="acd" autocomplete="off" required pattern="[a-z0-9][a-z0-9_\\-]*"></label>
+      <label>Key <input name="key" value="${esc(v.key)}" placeholder="acd" autocomplete="off" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" title="Letters, digits, _ or - and no spaces: what you type before the alias, as in “s acd me23n” (any case works when typing)"></label>
       <label class="wide">Name <input name="name" value="${esc(v.name)}" placeholder="Customer A – Development"></label>
       <label>Customer <input name="customer" value="${esc(v.customer)}" placeholder="Customer A"></label>
       <label>Environment <select name="env">${opt(ENVS, v.env)}</select></label>
@@ -218,6 +278,7 @@ function systemCard(s) {
       ${s.isDefault ? '<span class="badge outline">default</span>' : ''}
       <span class="actions">
         <button class="sm" data-action="open-launchpad" data-host="${esc(s.host)}">Open</button>
+        <button class="sm" data-action="system-info" data-host="${esc(s.host)}" title="Product version, system name, roles and client as the launchpad's About dialog reports them">Info</button>
         <button class="sm" data-action="rescan" data-host="${esc(s.host)}">Rescan</button>
         <button class="sm ${editing ? 'primary' : ''}" data-action="edit-system" data-host="${esc(s.host)}">Edit</button>
       </span>
@@ -229,6 +290,7 @@ function systemCard(s) {
       ${scan}
     </div>
     ${noAccess ? `<div class="notice warn inline"><span>slashn has no access to this site yet, so it cannot discover apps or reuse its tabs.</span><button class="sm" data-action="grant-access" data-host="${esc(s.host)}">Grant site access</button></div>` : ''}
+    ${ui.askScan === s.host && !noAccess && !status ? `<div class="notice info inline"><span>Scan <b>${esc(s.key)}</b> now? slashn opens its launchpad and reads the apps your user can reach, so suggestions know what exists there.</span><button class="sm primary" data-action="rescan" data-host="${esc(s.host)}">Scan now</button><button class="sm ghost" data-action="dismiss-scan">Not now</button></div>` : ''}
     ${editing ? systemForm(s, false) : ''}
   </article>`;
 }
@@ -267,9 +329,12 @@ async function saveSystem(form) {
   await storage.setSystems(systems);
   if (oldHost && hostChanged) await storage.clearDiscovered(oldHost);
   ui.editHost = null; ui.sysDraft = null; ui.sysErrors = [];
+  if (which === NEW) ui.askScan = draft.host; // first add: offer a scan right away
   snap.systems = systems;
   renderSystems(); // do not wait for the storage event: a pending permission prompt can delay it
   const granted = await access;
+  await refreshAccess(); // the storage event may have checked access before the permission prompt was answered
+  renderSystems();
   toast(granted ? 'System saved' : 'System saved – site access not granted, discovery disabled until you grant it', 3500);
 }
 
@@ -445,6 +510,9 @@ function renderSettings() {
   f.suggestionLimit.value = snap.settings.suggestionLimit;
   f.autoScanDays.value = snap.settings.autoScanDays;
   f.reuseTabOnSameHost.checked = Boolean(snap.settings.reuseTabOnSameHost);
+  f.actionOnlyOnSap.checked = snap.settings.actionOnlyOnSap !== false;
+  f.copyUnresolved.checked = snap.settings.copyUnresolved === true;
+  f.overlayBlur.checked = snap.settings.overlayBlur === true;
 }
 
 function renderRecent() {
@@ -467,7 +535,7 @@ const saveSettings = debounce(async () => {
   const f = $('#settings');
   const limit = Math.min(10, Math.max(1, Number(f.suggestionLimit.value) || 6));
   const days = Math.min(365, Math.max(0, Number(f.autoScanDays.value) || 0));
-  await storage.setSettings({ suggestionLimit: limit, autoScanDays: days, reuseTabOnSameHost: f.reuseTabOnSameHost.checked });
+  await storage.setSettings({ suggestionLimit: limit, autoScanDays: days, reuseTabOnSameHost: f.reuseTabOnSameHost.checked, actionOnlyOnSap: f.actionOnlyOnSap.checked, copyUnresolved: f.copyUnresolved.checked, overlayBlur: f.overlayBlur.checked });
   toast('Settings saved');
 }, 300);
 
@@ -479,6 +547,11 @@ document.addEventListener('click', async (ev) => {
   if (btn.classList.contains('tab')) { ui.tab = btn.dataset.tab; render(); return; }
   if (btn.parentElement?.id === 'alias-source') { ui.aliasSource = btn.dataset.value; renderAliases(); return; }
   if (btn.parentElement?.id === 'disc-host') { ui.discHost = btn.dataset.value; renderDiscovered(); return; }
+  if (btn.dataset.action === 'open-launcher') { chrome.runtime.sendMessage({ type: MSG.OPEN_LAUNCHER }).catch((e) => toast('Could not open: ' + (e.message || e))); return; }
+  if (btn.dataset.action === 'open-shortcuts') { ev.preventDefault(); chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }); return; }
+  if (btn.dataset.action === 'refresh-tabs') { renderTabs().catch((e) => toast('Could not list tabs: ' + (e.message || e))); return; }
+  if (btn.dataset.action === 'goto-tab') { gotoTab(Number(btn.dataset.id), Number(btn.dataset.window)).catch((e) => toast('Could not switch: ' + (e.message || e))); return; }
+  if (btn.dataset.action === 'close-tab') { ev.stopPropagation(); chrome.tabs.remove(Number(btn.dataset.id)).then(() => renderTabs()).catch((e) => toast('Could not close: ' + (e.message || e))); return; }
   const action = btn.dataset.action;
   try {
     switch (action) {
@@ -519,14 +592,29 @@ document.addEventListener('click', async (ev) => {
         if (system) chrome.tabs.create({ url: homeUrl(system) });
         break;
       }
+      case 'open-debug': {
+        const r = await chrome.runtime.sendMessage({ type: MSG.OPEN_DEBUG, host: snap.systems.find((s) => s.isDefault)?.host || snap.systems[0]?.host || '' });
+        if (r?.error) toast(r.error);
+        break;
+      }
+      case 'system-info': {
+        const r = await chrome.runtime.sendMessage({ type: MSG.OPEN_SYSTEM_INFO, host: btn.dataset.host });
+        if (r?.error) toast(r.error);
+        break;
+      }
       case 'view-discovered':
         ui.discHost = btn.dataset.host; ui.tab = 'discovered';
         render();
+        break;
+      case 'dismiss-scan':
+        ui.askScan = null;
+        renderSystems();
         break;
       case 'rescan':
       case 'rescan-selected': {
         const host = action === 'rescan' ? btn.dataset.host : ui.discHost;
         if (!host) return;
+        if (ui.askScan === host) ui.askScan = null;
         ui.rescanStatus[host] = 'Requesting scan…';
         renderSystems();
         const r = await chrome.runtime.sendMessage({ type: MSG.RESCAN_HOST, host });

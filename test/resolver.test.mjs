@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseInput, mergeEntries, buildIndex, rank, buildUrl, homeUrl, appFinderUrl, isOnHost,
   escapeXml, formatSuggestion, formatSystemSuggestion, formatDefaultDescription, MATCH, normalizeEntry,
+  tcodeLike, forcedTcode, guiEntry, titleWords,
 } from '../src/resolver.js';
 
 const systems = [
@@ -273,6 +274,21 @@ test('rank: absent-after-scan rows sink within their tier but never below a lowe
   assert.equal(exact[0].entry.alias, 'me21n'); // an exact alias still wins over a present fuzzy/prefix match
 });
 
+test('rank: availableOnly keeps scanned-present rows only, GUI rows included when the scan has Shell-startGUI', () => {
+  const discovered = [{ intent: 'PurchaseOrder-manage', title: 'Manage Purchase Orders' }];
+  const merged = mergeEntries({ seed, discovered });
+  const ix = buildIndex(merged);
+  const r = rank(parseInput('acd me2', systems), ix, { availableOnly: true });
+  assert.deepEqual(r.map((m) => m.entry.intent), ['PurchaseOrder-manage']);
+  assert.deepEqual(rank(parseInput('acd me21n', systems), ix, { availableOnly: true }), [], 'the exact alias is absent after the scan: nothing');
+  const withGui = rank(parseInput('acd me21n', systems), ix, { availableOnly: true, gui: { enabled: true, available: true } });
+  assert.deepEqual(withGui.map((m) => m.entry.intent), ['Shell-startGUI'], 'the GUI transaction is "available" when the scan saw Shell-startGUI');
+  assert.deepEqual(rank(parseInput('acd me21n', systems), ix, { availableOnly: true, gui: { enabled: true, available: null } }), [], 'unverified GUI is not');
+  assert.ok(rank(parseInput('acd me2', systems), ix).length > 1, 'off: everything as before');
+  const unscanned = rank(parseInput('acd me2', systems), buildIndex(mergeEntries({ seed })), { availableOnly: true });
+  assert.deepEqual(unscanned, [], 'before a scan nothing is judged present – callers must not set it');
+});
+
 test('formatting: availability tags and default-description warning', () => {
   const discovered = [{ intent: 'PurchaseOrder-manage', title: 'Manage Purchase Orders' }];
   const merged = mergeEntries({ seed, discovered });
@@ -285,4 +301,142 @@ test('formatting: availability tags and default-description warning', () => {
   const unknown = rank(parseInput('acd po', systems), buildIndex(mergeEntries({ seed })))[0];
   const d = formatSuggestion(unknown, systems[0]).description;
   assert.ok(!d.includes('tenant') && !d.includes('not found'));
+});
+
+test('gui: tcodeLike and /n parsing', () => {
+  for (const t of ['me21n', 'se16', 'su01', 'fbl1n', 'vl10b', 's_alr_87012357', '/sapapo/sdp94', 'ob52', 'f110', 'sm59']) assert.equal(tcodeLike(t), 'strong', t);
+  for (const t of ['spro', 'pfcg', 'stms', 'po', 'cat', 'sale']) assert.equal(tcodeLike(t), 'weak', t);
+  for (const t of ['manage', 'purchase', '123', '4500001234', 'a', '', '/n', 'me21n!', 'x'.repeat(41), 'ab-cd']) assert.equal(tcodeLike(t), false, JSON.stringify(t));
+  assert.equal(forcedTcode('/nme21n'), 'me21n');
+  assert.equal(forcedTcode('/NSE16'), 'se16');
+  assert.equal(forcedTcode('/n/sapapo/sdp94'), '/sapapo/sdp94');
+  assert.equal(forcedTcode('/n'), null);
+  assert.equal(forcedTcode('/nmanage'), null, 'a word is not forced into a transaction');
+  assert.equal(forcedTcode('me21n'), null);
+  const e = guiEntry('me21n', true);
+  assert.equal(e.alias, '/nme21n');
+  assert.equal(e.intent, 'Shell-startGUI');
+  assert.deepEqual(e.fixedParams, { 'sap-ui2-tcode': 'ME21N' });
+  assert.equal(e.onTarget, true);
+  assert.equal(e.source, 'gui');
+  assert.equal(buildUrl(systems[0], e), 'https://my1.s4hana.cloud.sap/ui#Shell-startGUI?sap-ui2-tcode=ME21N');
+  assert.equal(buildUrl(systems[0], e, 'ignored'), 'https://my1.s4hana.cloud.sap/ui#Shell-startGUI?sap-ui2-tcode=ME21N&Shell=ignored', 'buildUrl itself keeps a param; rank never passes one for GUI matches');
+  assert.equal(buildUrl(systems[0], guiEntry('/sapapo/sdp94')), 'https://my1.s4hana.cloud.sap/ui#Shell-startGUI?sap-ui2-tcode=%2FSAPAPO%2FSDP94');
+});
+
+test('gui: Shell-startGUI rows from the library or user aliases get their transaction code', () => {
+  const sys = systems[0];
+  assert.equal(buildUrl(sys, normalizeEntry({ alias: 'se63', semanticObject: 'Shell', action: 'startGUI', appId: 'SE63', title: 'SE63' })), 'https://my1.s4hana.cloud.sap/ui#Shell-startGUI?sap-ui2-tcode=SE63');
+  assert.equal(buildUrl(sys, normalizeEntry({ alias: 'users', intent: 'Shell-startGUI', tcodes: ['su01'], title: 'Users' })), 'https://my1.s4hana.cloud.sap/ui#Shell-startGUI?sap-ui2-tcode=SU01');
+  assert.equal(buildUrl(sys, normalizeEntry({ alias: 'sm59', intent: 'Shell-startGUI', title: 'RFC' })), 'https://my1.s4hana.cloud.sap/ui#Shell-startGUI?sap-ui2-tcode=SM59', 'alias as a last resort');
+  assert.equal(buildUrl(sys, normalizeEntry({ alias: 'gui', intent: 'Shell-startGUI', title: 'GUI', paramKey: 'sap-ui2-tcode' }), 'se16'), 'https://my1.s4hana.cloud.sap/ui#Shell-startGUI?sap-ui2-tcode=se16', 'an explicit paramKey takes the typed value');
+  assert.equal(buildUrl(sys, normalizeEntry({ alias: 'home', intent: 'Shell-home', title: 'Home' })), 'https://my1.s4hana.cloud.sap/ui#Shell-home', 'other Shell intents are untouched');
+});
+
+test('gui: ranking against present, absent and unverified Fiori matches; /n forces; public cloud never offers it', () => {
+  const discovered = [{ intent: 'PurchaseOrder-manage', title: 'Manage Purchase Orders' }, { intent: 'Shell-startGUI', title: 'GUI' }];
+  const scanned = buildIndex(mergeEntries({ seed, discovered }));
+  const unscanned = idx(seed);
+  const on = { enabled: true, available: true };
+  const contents = (text, index, gui) => rank(parseInput(text, systems), index, { gui }).map((m) => `${m.entry.alias ?? m.entry.intent}${m.param ? ' ' + m.param : ''}`);
+  assert.deepEqual(contents('acd me21n', scanned, on), ['/nme21n', 'me21n'], 'absent after scan: GUI first');
+  assert.deepEqual(contents('acd po', scanned, on), ['po'], 'present: no GUI row for a letters-only alias');
+  assert.deepEqual(contents('acd me22n 1', scanned, on).slice(0, 2), ['f0842 1', '/nme22n'], 'present via t-code (discovered row, alias from its app ID): Fiori first, GUI second without the value');
+  assert.deepEqual(contents('acd me21n 1', unscanned, { enabled: true, available: null }), ['me21n 1', '/nme21n'], 'unverified: Fiori first');
+  assert.deepEqual(contents('acd se16', unscanned, on), ['/nse16'], 'no Fiori match at all: GUI');
+  assert.deepEqual(contents('acd spro', unscanned, on), ['/nspro']);
+  assert.deepEqual(contents('acd sale', unscanned, on), ['va02'], 'letters-only head with a title match: no GUI row');
+  assert.deepEqual(contents('acd manage purchase', scanned, on).some((c) => c.startsWith('/n')), false);
+  assert.deepEqual(contents('acd /nme21n', unscanned, on), ['/nme21n'], 'forced: GUI only');
+  assert.deepEqual(contents('acd /nme21n', unscanned, { enabled: false }), [], 'public cloud: nothing');
+  assert.deepEqual(contents('acd me21n', unscanned, { enabled: false }), ['me21n']);
+  assert.deepEqual(contents('acd se16', unscanned, { enabled: true, available: false }), [], 'scanned without Shell-startGUI: never offered');
+  assert.deepEqual(contents('acd se16', unscanned, null), []);
+  const guiMatch = rank(parseInput('acd me21n', systems), scanned, { gui: on })[0];
+  assert.equal(guiMatch.type, MATCH.GUI);
+  assert.equal(guiMatch.param, null);
+  assert.equal(guiMatch.entry.onTarget, true);
+  const s = formatSuggestion(guiMatch, systems[0]);
+  assert.equal(s.content, 'acd /nme21n');
+  assert.ok(s.description.includes('SAP GUI') && s.description.includes('on tenant') && s.description.includes('Transaction ME21N'));
+  assert.equal(rank(parseInput(s.content, systems), scanned, { gui: on })[0].entry.intent, 'Shell-startGUI', 'suggestion content round-trips to the GUI launch');
+  assert.ok(formatDefaultDescription(parseInput('acd me21n', systems), guiMatch).includes('/nme21n'));
+  // a guess and the GUI row can coexist; the GUI row is first because the guess is not an exact match
+  const guesser = (head) => (head === 'va41' ? ['SalesContract-manage'] : []);
+  const withContract = idx([...seed, { alias: null, semanticObject: 'SalesContract', action: 'manage', title: 'Manage Sales Contracts' }]);
+  assert.deepEqual(rank(parseInput('acd va41', systems), withContract, { guesser, gui: on }).map((m) => m.type), [MATCH.GUI, MATCH.TCODE_GUESS]);
+});
+
+test('rank: sources keeps only the named origins; a forced /n ignores it', () => {
+  const discovered = [{ intent: 'PurchaseOrder-manage', title: 'Manage Purchase Orders' }];
+  const ix = buildIndex(mergeEntries({ seed, discovered, user: [{ alias: 'mine', semanticObject: 'PurchaseOrder', action: 'create', title: 'My PO alias' }] }));
+  const all = rank(parseInput('acd purchase', systems), ix, { limit: 20 });
+  assert.ok(all.some((m) => m.entry.source === 'discovered') && all.some((m) => m.entry.source === 'seed'), 'unfiltered: several origins');
+  const disc = rank(parseInput('acd purchase', systems), ix, { limit: 20, sources: ['discovered'] });
+  assert.ok(disc.length && disc.every((m) => m.entry.source === 'discovered'));
+  const mine = rank(parseInput('acd mine', systems), ix, { sources: ['user', 'import'] });
+  assert.deepEqual(mine.map((m) => m.entry.alias), ['mine']);
+  assert.deepEqual(rank(parseInput('acd mine', systems), ix, { sources: ['library'] }), [], 'a user alias is not a library row');
+  const forced = rank(parseInput('acd /nse16', systems), ix, { sources: ['library'], gui: { enabled: true, available: null } });
+  assert.equal(forced[0]?.entry.source, 'gui', 'forced GUI transactions ignore the source filter');
+});
+
+test('rank: tier order code > code prefix > title prefix > title substring, and recent launches reorder within a tier only', () => {
+  const entries = [
+    { alias: 'po', semanticObject: 'PurchaseOrder', action: 'manage', title: 'Manage Purchase Orders' },
+    { alias: 'pox', semanticObject: 'PurchaseOrder', action: 'other', title: 'Something else' },
+    { alias: 'zz1', semanticObject: 'Zeta', action: 'one', title: 'Po box' },
+    { alias: 'zz2', semanticObject: 'Zeta', action: 'two', title: 'Report of po items' },
+  ];
+  const ix = buildIndex(mergeEntries({ seed: entries }));
+  const order = rank(parseInput('acd po', systems), ix, { limit: 10 }).map((m) => m.type);
+  assert.deepEqual(order, ['alias', 'keyPrefix', 'titlePrefix', 'titleFuzzy']);
+  // two title-prefix rows: the recently launched one comes first
+  const two = [
+    { alias: 'a1', semanticObject: 'A', action: 'one', title: 'Payment run' },
+    { alias: 'a2', semanticObject: 'A', action: 'two', title: 'Payment proposal' },
+  ];
+  const ix2 = buildIndex(mergeEntries({ seed: two }));
+  assert.deepEqual(rank(parseInput('acd pay', systems), ix2).map((m) => m.entry.alias), ['a1', 'a2'], 'without recents: alias order');
+  assert.deepEqual(rank(parseInput('acd pay', systems), ix2, { recentIntents: ['A-two'] }).map((m) => m.entry.alias), ['a2', 'a1'], 'recent first');
+  // but never over a higher tier
+  const mixed = buildIndex(mergeEntries({ seed: [...two, { alias: 'pay', semanticObject: 'B', action: 'x', title: 'Unrelated' }] }));
+  assert.equal(rank(parseInput('acd pay', systems), mixed, { recentIntents: ['A-two'] })[0].entry.alias, 'pay', 'the exact alias stays first');
+});
+
+test('rank: fact sheets sit a notch below their siblings; frequent launches add to the recency boost', () => {
+  const entries = [
+    { alias: 'f1', semanticObject: 'SalesOrder', action: 'displayFactSheet', title: 'Sales Order' },
+    { alias: 'f2', semanticObject: 'SalesOrder', action: 'manage', title: 'Manage Sales Orders' },
+  ];
+  const ix = buildIndex(mergeEntries({ seed: entries }));
+  assert.deepEqual(rank(parseInput('acd ord', systems), ix).map((m) => m.entry.alias), ['f2', 'f1'], 'the shorter fact-sheet title no longer wins on coverage');
+  const three = [
+    { alias: 'a1', semanticObject: 'A', action: 'one', title: 'Payment run' },
+    { alias: 'a2', semanticObject: 'A', action: 'two', title: 'Payment proposal' },
+  ];
+  const ix2 = buildIndex(mergeEntries({ seed: three }));
+  const recents = ['A-one', 'A-two', 'A-two', 'A-two', 'A-two']; // one launched last, two launched often
+  assert.equal(rank(parseInput('acd pay', systems), ix2, { recentIntents: recents })[0].entry.alias, 'a2', 'frequency outweighs a single more recent launch');
+});
+
+test('titleWords: underscores and camel case split, so intent-like titles are searchable by their parts', () => {
+  assert.deepEqual(titleWords('NYH_AIDocument-process'), ['nyh', 'aidocument', 'ai', 'document', 'process']);
+  assert.deepEqual(titleWords('SalesOrder-manage'), ['salesorder', 'sales', 'order', 'manage']);
+  assert.deepEqual(titleWords('Manage Purchase Orders'), ['manage', 'purchase', 'orders']);
+  const ix = buildIndex(mergeEntries({ discovered: [{ intent: 'NYH_AIDocument-process', title: '' }] }));
+  assert.equal(rank(parseInput('acd aidocu', systems), ix)[0]?.entry.intent, 'NYH_AIDocument-process', 'found by a part of the object name');
+  assert.equal(rank(parseInput('acd process', systems), ix)[0]?.entry.intent, 'NYH_AIDocument-process', 'and by the action');
+});
+
+test('rank: on a scanned system a present app found by a title word beats absent library apps whose titles start with it', () => {
+  const library = Array.from({ length: 10 }, (_, i) => ({ alias: `lib${i}`, semanticObject: `Partner${i}`, action: 'run', title: `Partner report ${i}`, source: 'library' }));
+  const discovered = [{ intent: 'BusinessPartner-display', title: '' }];
+  const ix = buildIndex(mergeEntries({ seed: library, discovered }));
+  const r = rank(parseInput('acd partner', systems), ix, { limit: 8 });
+  assert.equal(r[0].entry.intent, 'BusinessPartner-display', 'the present app comes first');
+  assert.ok(r.slice(1).every((m) => m.entry.onTarget === false));
+  // unscanned: tier order as before (prefix of the whole title first)
+  const ix2 = buildIndex(mergeEntries({ seed: [...library, { alias: 'bp', semanticObject: 'BusinessPartner', action: 'display', title: 'Business Partner' }] }));
+  assert.equal(rank(parseInput('acd partner', systems), ix2, { limit: 20 }).at(-1).entry.alias, 'bp');
 });

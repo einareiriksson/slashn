@@ -11,6 +11,7 @@ export const MATCH = Object.freeze({
   KEY_PREFIX: 'keyPrefix',
   TITLE_PREFIX: 'titlePrefix',
   TITLE_FUZZY: 'titleFuzzy',
+  GUI: 'gui', // classic transaction via #Shell-startGUI?sap-ui2-tcode= (On-Premise / Private Cloud)
 });
 
 export const TIER = Object.freeze({
@@ -19,6 +20,7 @@ export const TIER = Object.freeze({
   [MATCH.APP_ID]: 5,
   [MATCH.INTENT]: 4,
   [MATCH.TCODE_GUESS]: 3.5,
+  [MATCH.GUI]: 3.4,
   [MATCH.KEY_PREFIX]: 3,
   [MATCH.TITLE_PREFIX]: 2,
   [MATCH.TITLE_FUZZY]: 1,
@@ -32,6 +34,8 @@ export const SOURCE_RANK = Object.freeze({ user: 4, discovered: 3, import: 2.5, 
 export const DEFAULT_LAUNCHPAD_PATH = '/ui';
 export const HOME_INTENT = 'Shell-home';
 export const APP_FINDER_INTENT = 'Shell-appfinder';
+export const GUI_INTENT = 'Shell-startGUI';
+export const GUI_TCODE_PARAM = 'sap-ui2-tcode';
 export const MIN_PREFIX_LENGTH = 2;
 /** First tokens that list systems / open options instead of resolving an alias ("?" is special in Chrome's omnibox). */
 export const EDITIONS = Object.freeze(['public', 'private', 'onprem']);
@@ -116,6 +120,7 @@ export function normalizeEntry(raw) {
     source: r.source || 'seed',
     confidence: r.confidence || null,
     discoveredOnTarget: Boolean(r.discoveredOnTarget),
+    fixedParams: r.fixedParams && typeof r.fixedParams === 'object' && Object.keys(r.fixedParams).length ? { ...r.fixedParams } : null,
     // true = the last scan of the target offers this intent, false = scanned and absent, null = unknown (no scan / Shell intent)
     onTarget: r.onTarget === true ? true : r.onTarget === false ? false : null,
   };
@@ -185,10 +190,54 @@ export function mergeEntries({ user = [], seed = [], hidden = [], discovered = [
   return out;
 }
 
+// ---------------------------------------------------------------- classic transactions (SAP GUI)
+
+/**
+ * Does the typed head look like a transaction code rather than an English word?
+ * 'strong': carries a digit, underscore or namespace (ME21N, SE16, S_ALR_87012357, /SAPAPO/SDP94) – always offered.
+ * 'weak': letters only, at most four (SPRO, PFCG, STMS) – offered only when nothing else matches, since "sale" or "cost" are words too.
+ * false: anything else (manage, purchase, 123).
+ */
+export function tcodeLike(head) {
+  const h = lc(head);
+  if (h.length < 2 || h.length > 40) return false;
+  if (!/^(\/[a-z0-9_]+\/)?[a-z][a-z0-9_]*$/.test(h)) return false;
+  if (/\d|[_/]/.test(h)) return 'strong';
+  return h.length <= 4 ? 'weak' : false;
+}
+
+/** "/nme21n" (SAP GUI command field) → "me21n"; null when the head carries no /n prefix. */
+export function forcedTcode(head) {
+  const m = /^\/n(.+)$/i.exec(str(head));
+  return m && tcodeLike(m[1]) ? lc(m[1]) : null;
+}
+
+/** Synthetic entry that opens transaction `tcode` in the launchpad's SAP GUI (WebGUI) runtime. */
+export function guiEntry(tcode, available = null) {
+  const t = lc(tcode);
+  const T = t.toUpperCase();
+  return normalizeEntry({
+    alias: `/n${t}`, intent: GUI_INTENT, title: `Transaction ${T} in SAP GUI`, source: 'gui', tcodes: [t],
+    fixedParams: { [GUI_TCODE_PARAM]: T }, onTarget: available,
+  });
+}
+
 // ---------------------------------------------------------------- matching
 
+/**
+ * Words of a title for prefix matching. Underscores split too, and camel-case words contribute their parts as well as
+ * themselves, so an untitled discovered app shown by its intent ("NYH_AIDocument-process") is found by "aidocu" or
+ * "process", and "SalesOrder-manage" by "order".
+ */
 export function titleWords(title) {
-  return lc(title).split(/[\s\-/(),.:;&+]+/).filter(Boolean);
+  const raw = String(title ?? '').split(/[\s\-_/(),.:;&+]+/).filter(Boolean);
+  const out = [];
+  for (const w of raw) {
+    out.push(lc(w));
+    const parts = w.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').split(' ');
+    if (parts.length > 1) for (const p of parts) out.push(lc(p));
+  }
+  return [...new Set(out)];
 }
 
 export function buildIndex(entries) {
@@ -235,10 +284,29 @@ export function matchEntry(ix, head, query) {
   return null;
 }
 
-export function scoreMatch(type, entry, coverage = 0) {
+/** Boost for a recently launched intent: 4000 for the most recent, fading out over the last 20 launches – within a tier
+ *  it reorders rows, it never lifts a row over a higher tier (20000 apart) or over a scan-present boost (55000). */
+export function recentBoost(index) {
+  return index == null || index < 0 ? 0 : Math.max(0, 4000 - index * 200);
+}
+
+/** Fact sheets (object pages) are reached by navigation, rarely typed: a notch down within the tier. */
+const FACT_SHEET_RE = /factsheet$/i;
+
+export function scoreMatch(type, entry, coverage = 0, recentIndex = null, launches = 0) {
+  // Rows the scan found present get a boost: exact keyed matches almost three tiers, so a t-code mapped to a present
+  // successor app (ME21N → Manage Purchase Orders) outranks the same code's alias row whose app is absent on this
+  // tenant, while a present alias still beats a present t-code; title matches a little over one tier, so a present app
+  // found by a word inside its title ("partner" in Business Partner) beats absent or unverified library apps whose
+  // titles merely start with the word, instead of being crowded out of the result limit by them.
+  const present = entry.onTarget === true ? (EXACT_KEYED.has(type) ? 55000 : 25000) : 0;
   return Math.round(TIER[type] * 20000)
+    + present
+    + recentBoost(recentIndex)
+    + Math.min(launches, 5) * 300 // frequently launched: up to +1500 on top of recency
+    - (FACT_SHEET_RE.test(String(entry.intent || '')) ? 3000 : 0)
     + (entry.discoveredOnTarget ? 5000 : 0)
-    - (entry.onTarget === false ? 5000 : 0) // scanned and absent: sinks within its tier, never below a lower tier
+    - (entry.onTarget === false ? 6000 : 0) // scanned and absent: sinks within its tier, below present rows of lower keyed tiers
     + Math.round(Math.min(coverage, 1.2) * 1000)
     + Math.max(0, 200 - str(entry.title).length);
 }
@@ -247,13 +315,36 @@ export function scoreMatch(type, entry, coverage = 0) {
  * rank(parsed, index, { limit, guesser }) → [{ entry, type, score, param }]
  * `guesser(head)` optionally returns candidate intents ("SO-action") for an unknown t-code;
  * a guess is only offered when that intent exists in the index.
+ * `availableOnly` keeps only rows the last scan found on the target (onTarget === true), so on an
+ * unscanned system it would drop everything – callers only set it after a scan.
+ * `sources` (iterable of entry.source values: user, import, discovered, seed, library, gui) keeps only those rows;
+ * a forced "/n" transaction ignores it.
+ * `recentIntents` (most recent first, duplicates allowed) boosts rows the user launched lately, within their tier:
+ * by how recent the last launch was, plus a little for how often it appears.
  */
-export function rank(parsed, index, { limit = 6, guesser = null } = {}) {
+export function rank(parsed, index, { limit = 6, guesser = null, gui = null, availableOnly = false, sources = null, recentIntents = null } = {}) {
+  const allowed = sources ? new Set(sources) : null;
+  const recentIdx = new Map();
+  const launches = new Map();
+  let order = 0;
+  for (const intent of recentIntents || []) {
+    const k = lc(intent);
+    if (!k) continue;
+    if (!recentIdx.has(k)) recentIdx.set(k, order++);
+    launches.set(k, (launches.get(k) || 0) + 1);
+  }
+  const recentOf = (entry) => (recentIdx.size ? recentIdx.get(lc(entry.intent)) ?? null : null);
+  const launchesOf = (entry) => launches.get(lc(entry.intent)) || 0;
   if (!parsed || parsed.kind !== 'query' || !parsed.head) return [];
   const head = parsed.head;
   const query = parsed.query;
   const param = parsed.rest.length ? parsed.rest.join(' ') : null;
-  const mk = (entry, type, coverage) => ({ entry, type, score: scoreMatch(type, entry, coverage), param: KEYED.has(type) ? param : null });
+  const mk = (entry, type, coverage) => ({ entry, type, score: scoreMatch(type, entry, coverage, recentOf(entry), launchesOf(entry)), param: KEYED.has(type) ? param : null });
+  const guiOn = Boolean(gui?.enabled) && gui.available !== false; // scanned without Shell-startGUI: never offered
+
+  // "/nse16": only the GUI transaction, nothing else (and nothing at all where GUI launches are not offered)
+  const forced = forcedTcode(head);
+  if (forced) return guiOn ? [mk(guiEntry(forced, gui.available ?? null), MATCH.GUI)] : [];
 
   const matches = [];
   for (const ix of index) {
@@ -268,15 +359,28 @@ export function rank(parsed, index, { limit = 6, guesser = null } = {}) {
     }
   }
 
-  matches.sort((a, b) => b.score - a.score
+  // weak shapes (letters only, ≤4): only when nothing usable matched – no match at all, every match scanned absent, or
+  // (with the filter on) none present
+  const usable = (m) => (availableOnly ? m.entry.onTarget === true : m.entry.onTarget !== false);
+  const shape = guiOn ? tcodeLike(head) : false;
+  if (shape === 'strong' || (shape === 'weak' && !matches.some(usable))) {
+    // Fiori intent known present or unverified: GUI second; known absent (or no exact match at all): GUI first.
+    const exactUsable = matches.some((m) => EXACT_KEYED.has(m.type) && m.entry.onTarget !== false);
+    const g = mk(guiEntry(head, gui.available ?? null), MATCH.GUI);
+    if (!exactUsable) g.score = Math.round(TIER[MATCH.ALIAS] * 20000) + 10000;
+    matches.push(g);
+  }
+
+  const pool = matches.filter((m) => (!availableOnly || m.entry.onTarget === true) && (!allowed || allowed.has(m.entry.source)));
+  pool.sort((a, b) => b.score - a.score
     || (a.entry.alias?.length ?? 99) - (b.entry.alias?.length ?? 99) // same score: shorter alias (f0842 before dfs_po_manage)
     || cmpNullable(a.entry.alias, b.entry.alias)
     || lc(a.entry.intent).localeCompare(lc(b.entry.intent)));
 
   const seen = new Set();
   const out = [];
-  for (const m of matches) {
-    const k = lc(m.entry.intent);
+  for (const m of pool) {
+    const k = lc(m.entry.intent) + (m.entry.fixedParams ? '?' + JSON.stringify(m.entry.fixedParams) : '');
     if (seen.has(k)) continue;
     seen.add(k);
     out.push(m);
@@ -311,7 +415,14 @@ export function intentUrl(system, intent, params = null) {
 
 export function buildUrl(system, entry, param = null) {
   const key = entry.paramKey || entry.semanticObject;
-  return intentUrl(system, entry.intent, param ? { [key]: param } : null);
+  const params = { ...(entry.fixedParams || {}) };
+  // a Shell-startGUI row (library "SAP GUI" apps, user aliases) needs its transaction code or the shell opens nothing
+  if (lc(entry.intent) === lc(GUI_INTENT) && !params[GUI_TCODE_PARAM] && !entry.paramKey) {
+    const t = entry.tcodes?.[0] || entry.appId || (entry.alias && !entry.alias.startsWith('/') ? entry.alias : null);
+    if (t) params[GUI_TCODE_PARAM] = String(t).toUpperCase();
+  }
+  if (param) params[key] = param;
+  return intentUrl(system, entry.intent, params);
 }
 
 export const homeUrl = (system) => intentUrl(system, HOME_INTENT);
@@ -353,6 +464,7 @@ export function formatSuggestion(match, system) {
   const mid = isTitle ? `<match>${escapeXml(e.title)}</match>` : escapeXml(e.title);
   const tags = [system.key, e.intent];
   if (match.type === MATCH.TCODE_GUESS || e.confidence === 'low') tags.push('guess');
+  if (match.type === MATCH.GUI) tags.push('SAP GUI');
   if (e.onTarget === true) tags.push('on tenant');
   else if (e.onTarget === false) tags.push(`not found on ${system.key}`);
   return { content: suggestionContent(match, system), description: `${left}  ${mid}  <dim>[${escapeXml(tags.join(' · '))}]</dim>` };

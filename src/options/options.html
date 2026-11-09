@@ -14,6 +14,7 @@
         <button class="tab" data-tab="systems" role="tab">Systems</button>
         <button class="tab" data-tab="aliases" role="tab">Aliases</button>
         <button class="tab" data-tab="discovered" role="tab">Discovered apps</button>
+        <button class="tab" data-tab="tabs" role="tab">Open tabs</button>
         <button class="tab" data-tab="settings" role="tab">Settings</button>
       </nav>
       <details class="help">
@@ -122,6 +123,20 @@
         <details id="disc-missing" class="more"><summary></summary><div id="missing-list" class="rows compact"></div></details>
       </section>
 
+      <!-- Open SAP tabs -->
+      <section id="tab-tabs" class="panel" hidden>
+        <header class="ph">
+          <h1>Open tabs</h1>
+          <p>Every browser tab on a registered system or a page that looks like a Fiori launchpad, across all windows. Click a row to switch to it.</p>
+        </header>
+        <div class="filters">
+          <span id="tabs-count" class="muted"></span>
+          <span class="spacer"></span>
+          <button data-action="refresh-tabs">Refresh</button>
+        </div>
+        <div id="tabs-list" class="rows"></div>
+      </section>
+
       <!-- Settings -->
       <section id="tab-settings" class="panel" hidden>
         <header class="ph"><h1>Settings</h1></header>
@@ -130,6 +145,10 @@
           <label class="setting"><span>Suggestions shown in the address bar</span><input name="suggestionLimit" type="number" min="1" max="10"></label>
           <label class="setting"><span>Rescan a system automatically after <em>n</em> days <small>(0 = on every launchpad load)</small></span><input name="autoScanDays" type="number" min="0" max="365"></label>
           <label class="setting check"><input name="reuseTabOnSameHost" type="checkbox"><span>Reuse the current tab when it is already on the target system</span></label>
+          <label class="setting"><span>Launcher window <small>(Spotlight-style, from any page; the shortcut is set under <a href="#" data-action="open-shortcuts">chrome://extensions/shortcuts</a>, default Alt+Shift+S)</small></span><button type="button" data-action="open-launcher">Open now</button></label>
+          <label class="setting check"><input name="actionOnlyOnSap" type="checkbox"><span>Grey out the toolbar button on pages that are not a SAP launchpad <small>(the address bar launcher always works)</small></span></label>
+          <label class="setting check"><input name="overlayBlur" type="checkbox"><span>Blur the page behind the launcher overlay <small>(off: the page is only dimmed and stays readable)</small></span></label>
+          <label class="setting check"><input name="copyUnresolved" type="checkbox"><span>Copy an unresolved alias to the clipboard when the App Finder opens <small>(off by default: it replaces whatever the clipboard holds)</small></span></label>
         </form>
 
         <div class="card">
@@ -142,6 +161,12 @@
             <button data-action="import-json" class="ghost">Import and replace…</button>
             <input type="file" id="file-json" accept="application/json,.json" hidden>
           </div>
+        </div>
+
+        <div class="card">
+          <h3>Developer</h3>
+          <p class="muted small">Run the launchpad shell calls slashn relies on (logon-system getters, AppLifeCycle info, navigation and content services) in an open tab of a system and inspect the raw answers.</p>
+          <div class="formbar"><button data-action="open-debug">Open shell debug…</button></div>
         </div>
 
         <div class="card">

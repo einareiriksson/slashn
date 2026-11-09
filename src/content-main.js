@@ -55,8 +55,8 @@
   function scan() {
     if (inFlight) return inFlight;
     inFlight = runDiscovery()
-      .then((result) => post({ type: PM.DISCOVERY, host: location.hostname, ...result }))
-      .catch((e) => post({ type: PM.DISCOVERY_ERROR, host: location.hostname, error: String((e && e.message) || e) }))
+      .then((result) => post({ type: PM.DISCOVERY, host: location.host, ...result }))
+      .catch((e) => post({ type: PM.DISCOVERY_ERROR, host: location.host, error: String((e && e.message) || e) }))
       .finally(() => { inFlight = null; });
     return inFlight;
   }
@@ -195,20 +195,50 @@
     return map;
   }
 
-  /** The same fields the launchpad's About dialog shows (sap.ushell.Container.getLogonSystem()). */
-  function readSystemInfo(errors) {
+  /**
+   * The same fields the launchpad's About dialog shows: System tab from sap.ushell.Container.getLogonSystem(),
+   * Application tab from AppLifeCycle.getCurrentApplication().getInfo(). Keep in sync with readLogonSystemInPage in src/probe.js.
+   */
+  async function readSystemInfo(errors) {
+    const out = {};
     try {
       const sys = window.sap.ushell.Container.getLogonSystem && window.sap.ushell.Container.getLogonSystem();
-      if (!sys) return null;
-      const out = {};
-      for (const [key, getter] of [['productName', 'getProductName'], ['productVersion', 'getProductVersion'], ['systemName', 'getSystemName'], ['systemRole', 'getSystemRole'], ['tenantRole', 'getTenantRole'], ['client', 'getClient']]) {
-        try { const v = typeof sys[getter] === 'function' ? sys[getter]() : undefined; if (typeof v === 'string' && v.trim()) out[key] = v.trim(); } catch { /* optional getter */ }
+      if (sys) {
+        for (const [key, getter] of [['productName', 'getProductName'], ['productVersion', 'getProductVersion'], ['systemName', 'getSystemName'], ['systemRole', 'getSystemRole'], ['tenantRole', 'getTenantRole'], ['client', 'getClient'], ['clientRole', 'getClientRole']]) {
+          try { const v = typeof sys[getter] === 'function' ? sys[getter]() : undefined; if ((typeof v === 'string' && v.trim()) || typeof v === 'number') out[key] = String(v).trim(); } catch { /* optional getter */ }
+        }
       }
-      return Object.keys(out).length ? out : null;
     } catch (e) {
       errors.push('system info: ' + (e && e.message ? e.message : e));
-      return null;
     }
+    // Application tab: getAllAppInfo() is what the dialog itself calls; getInfo(keys) is the older entry point;
+    // the running component's manifest is where the shell takes appVersion from (/sap.app/applicationVersion/version).
+    const merge = (info) => {
+      for (const k in info || {}) {
+        const raw = info[k];
+        const v = raw && typeof raw === 'object' && 'value' in raw ? raw.value : raw;
+        if (((typeof v === 'string' && v.trim()) || typeof v === 'number') && !(k in out)) out[k] = String(v).trim();
+      }
+    };
+    const withTimeout = (p) => Promise.race([p, new Promise((resolve) => setTimeout(() => resolve(null), 3000))]);
+    try {
+      const keys = ['appVersion', 'appTitle', 'appId', 'transaction', 'appIntent', 'appSupportInfo', 'technicalAppComponentId', 'appFrameworkId', 'appFrameworkVersion', 'contentProviderLabel', 'productName', 'productVersion'];
+      const svc = await getService('AppLifeCycle');
+      const app = svc && typeof svc.getCurrentApplication === 'function' ? svc.getCurrentApplication() : null;
+      if (app && typeof app.getAllAppInfo === 'function') {
+        try { merge(await withTimeout(app.getAllAppInfo(true))); } catch (e) { errors.push('getAllAppInfo: ' + (e && e.message ? e.message : e)); }
+        try { merge(await withTimeout(app.getAllAppInfo(false))); } catch { /* custom entries are optional */ }
+      }
+      if (app && typeof app.getInfo === 'function' && !out.appVersion) merge(await withTimeout(app.getInfo(keys)));
+      if (app && !out.appVersion) {
+        const comp = app.componentInstance;
+        const v = comp && typeof comp.getManifestEntry === 'function' ? comp.getManifestEntry('/sap.app/applicationVersion/version') : null;
+        if (typeof v === 'string' && v) out.appVersion = v;
+      }
+    } catch (e) {
+      errors.push('app info: ' + (e && e.message ? e.message : e));
+    }
+    return Object.keys(out).length ? out : null;
   }
 
   async function runDiscovery() {
@@ -249,7 +279,7 @@
       if (entries.length >= MAX_ENTRIES) break;
     }
     const ui5Version = (() => { try { return window.sap.ui.version; } catch { return null; } })();
-    const system = readSystemInfo(errors);
+    const system = await readSystemInfo(errors);
     log('discovery done', entries.length, 'intents in', Math.round(performance.now() - started), 'ms', methods, system, errors.length ? errors : '');
     return { entries, ui5Version, system, methods, errors, scannedAt: new Date().toISOString() };
   }

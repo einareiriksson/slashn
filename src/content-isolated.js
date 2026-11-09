@@ -9,11 +9,16 @@
   const LOG = '[SAPQS]';
   const INTENT_RE = /^[A-Za-z0-9_]+-[A-Za-z0-9_]+$/;
   const MAX_ENTRIES = 5000;
-  const SYSTEM_INFO_FIELDS = ['productName', 'productVersion', 'systemName', 'systemRole', 'tenantRole', 'client'];
+  // keep in sync with SYSTEM_INFO_FIELDS in src/storage.js (System tab getters + Application tab entries)
+  const SYSTEM_INFO_FIELDS = ['productName', 'productVersion', 'productVersions', 'systemName', 'systemRole', 'tenantRole', 'client', 'clientRole',
+    'appVersion', 'appTitle', 'appId', 'transaction', 'appIntent', 'appSupportInfo', 'technicalAppComponentId', 'appFrameworkId', 'appFrameworkVersion', 'contentProviderLabel'];
   const systemInfo = (raw) => {
     if (!raw || typeof raw !== 'object') return null;
     const out = {};
-    for (const k of SYSTEM_INFO_FIELDS) if (typeof raw[k] === 'string' && raw[k].trim()) out[k] = raw[k].trim().slice(0, 120);
+    for (const k of SYSTEM_INFO_FIELDS) {
+      const v = typeof raw[k] === 'number' ? String(raw[k]) : raw[k];
+      if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, 600); // the worker's sanitizeSystemInfo splits multi-line product lists and caps the rest
+    }
     return Object.keys(out).length ? out : null;
   };
   const log = (...a) => console.debug(LOG, ...a);
@@ -89,12 +94,12 @@
         : [];
       toWorker({
         type: MSG.DISCOVERY_RESULT,
-        host: location.hostname,
+        host: location.host,
         entries,
-        ui5Version: typeof d.ui5Version === 'string' ? d.ui5Version : null,
+        ui5Version: typeof d.ui5Version === 'string' ? d.ui5Version.slice(0, 40) : null,
         system: systemInfo(d.system),
-        methods: d.methods && typeof d.methods === 'object' ? d.methods : {},
-        errors: Array.isArray(d.errors) ? d.errors.map(String) : [],
+        methods: d.methods && typeof d.methods === 'object' ? d.methods : {}, // the worker keeps short scalar fields only
+        errors: Array.isArray(d.errors) ? d.errors.slice(0, 20).map((x) => String(x).slice(0, 300)) : [],
       }).then((r) => log('discovery stored', r));
     }
   });
@@ -117,7 +122,7 @@
   // The MAIN script runs at document_start and posts MAIN_READY; if that arrived before this listener existed,
   // the RESCAN is simply posted now and the MAIN script's listener (already installed) picks it up.
   mainReady = true;
-  toWorker({ type: MSG.PAGE_READY, host: location.hostname, url: location.href }).then((reply) => {
+  toWorker({ type: MSG.PAGE_READY, host: location.host, url: location.href }).then((reply) => {
     log('page ready', reply);
     if (reply && reply.scan) requestScan();
   });

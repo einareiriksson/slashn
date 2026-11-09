@@ -176,3 +176,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; margin: 0
 .setting.check { justify-content: flex-start; }
 
 .toast { position: fixed; bottom: 20px; right: 20px; background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.25); z-index: 10; }
+
+/* Open tabs page: whole row switches to the tab */
+.row.tabrow { cursor: pointer; }
+.row.tabrow:hover, .row.tabrow:focus-visible { background: var(--chip); outline: none; }

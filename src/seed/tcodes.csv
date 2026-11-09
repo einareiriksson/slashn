@@ -114,13 +114,27 @@ IP10;IP30;IP41,MaintenancePlan,manage,F3112,,low,Manage Maintenance Plans
 PA20;PA30;PA40,Employee,manage,,,low,Employee master data
 # --- Basis / admin
 SU01;SU01D;SU10,BusinessUser,maintain,F1303,,medium,Maintain Business Users
-PFCG;SU24,BusinessRole,maintain,F1492,,medium,Maintain Business Roles
-SM59;SOAMANAGER,CommunicationArrangement,manage,F1596,,low,Communication Arrangements
-SLG1,ApplicationLog,display,F2240,,low,Application Logs
-SM37;SM36,ApplicationJob,manage,F1240,,low,Application Jobs
+PFCG;SU24,BusinessUserRole,maintain,F1492,,medium,Maintain Business Roles
+SM59,CommunicationSystem,maintain,F1762,,medium,Communication Systems
+SOAMANAGER,CommunicationArrangement,maintain,F1763,,medium,Communication Arrangements
+SLG1,ApplicationLog,showList,F1487,,medium,Application Logs
+SM37;SM36;SMX,ApplicationJob,show,F1240,,high,Application Jobs
 SM30;SM31;SPRO,ConfigurationStep,manage,,,low,Manage Your Solution
 SE16;SE16N,CustomCDSView,display,,,low,View Browser
 SE80;SE38,CustomAnalyticalQuery,manage,,,low,Custom development (not in Public Cloud)
+ST22,ABAPSystem,displayRuntimeErrors,F7770,,high,ABAP Runtime Errors
+GCTS,GCTSRepository,manage,F4158,,high,Git-enabled CTS
+# Classic Basis monitoring has no cloud counterpart: locks, update records and the system log are SAP-managed there.
+# The rows name the cloud apps that take over the job (lock holders → user sessions, SM13/SM21 → application and
+# integration logs, traces). On premise the scan marks them absent and /n<code> opens the GUI transaction as before.
+SM12;SMENQ,BusinessUser,displayUserSessions,F6049,,medium,Maintain User Sessions
+SM12;SMENQ,BusinessUser,displayOwnSessions,F5708,,low,Maintain Own User Sessions
+SM13,ApplicationLog,showList,F1487,,medium,Application Logs
+SM13,AIFMessage,manage,F1414,,low,Message Dashboard
+SM21,ApplicationLog,showList,F1487,,medium,Application Logs
+SM21,BusinessUserRole,displayAuthorizationTrace,F4106,,low,Display Authorization Trace
+SU53;ST01;STAUTHTRACE,BusinessUserRole,displayAuthorizationTrace,F4106,,medium,Display Authorization Trace
+SM19;SM20;RSAU_CONFIG;RSAU_READ_LOG,SecurityAuditLog,displayV2,F4204A,,medium,Display Security Audit Log
 # --- Shell
 HOME,Shell,home,,,high,Launchpad home
 FINDER;APPFINDER,Shell,appfinder,,,high,App Finder

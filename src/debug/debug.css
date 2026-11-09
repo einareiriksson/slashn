@@ -1,0 +1,15 @@
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.row label { display: flex; align-items: center; gap: 6px; }
+.row label.grow { flex: 1; }
+.row label.grow select { flex: 1; min-width: 0; }
+select, textarea { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--fg); }
+textarea { width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; resize: vertical; }
+label.params { display: block; }
+#out { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.result { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.result .head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 4px; }
+.result .head .name { font-weight: 600; }
+.result .head .ok { color: var(--ok-fg); }
+.result .head .err { color: var(--danger); }
+.result pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; max-height: 420px; overflow: auto; }
+.small { font-size: 12px; }

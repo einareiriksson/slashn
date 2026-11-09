@@ -25,6 +25,12 @@ export const MSG = Object.freeze({
   RESOLVE: 'SAPQS_RESOLVE',                   // popup → SW      { text }          reply { kind, system, hint, matches }
   NAVIGATE: 'SAPQS_NAVIGATE',                 // popup → SW      { text, disposition, contextHost, force }  reply { action:'open'|'blocked'|…, reason }
   OPEN_URL: 'SAPQS_OPEN_URL',                 // popup → SW      { url, host, disposition }
+  OPEN_SYSTEM_INFO: 'SAPQS_OPEN_SYSTEM_INFO', // popup/options → SW { host }      reply { windowId } – opens or focuses the system-info dialog window
+  OPEN_LAUNCHER: 'SAPQS_OPEN_LAUNCHER',       // options → SW    {}                reply { windowId, tabId } – the centred launcher window (also the keyboard command)
+  PROBE_SYSTEM: 'SAPQS_PROBE_SYSTEM',         // sysinfo → SW    { host }          reply { launchpad, system, ui5Version, tabId } | { launchpad:false, reason }
+  OPEN_DEBUG: 'SAPQS_OPEN_DEBUG',             // sysinfo/options → SW { host? }    reply { windowId } – opens or focuses the shell debug window
+  LAUNCHER_HELLO: 'SAPQS_LAUNCHER_HELLO',     // popup → SW      { nonce }         reply { ok } – the launcher page renders only when the worker opened it (web pages can frame the page, but not know the nonce)
+  DEBUG_CALL: 'SAPQS_DEBUG_CALL',             // debug → SW      { host, call, params } reply { ok, ms, result | error, tabId } | { launchpad:false, reason }
 });
 
 export const LOG_PREFIX = '[SAPQS]';

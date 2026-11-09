@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>System information – slashn</title>
+  <link rel="stylesheet" href="sysinfo.css">
+</head>
+<body>
+  <header>
+    <div>
+      <div id="title" class="title">System information</div>
+      <div id="subtitle" class="muted"></div>
+    </div>
+    <span id="env" class="badge"></span>
+  </header>
+  <div id="notice" class="notice" hidden></div>
+  <div id="sections"></div>
+  <footer>
+    <button id="refresh" class="primary" title="Read the About fields from an open launchpad tab of this system">Refresh from open tab</button>
+    <button id="open" title="Open the launchpad home in a new tab">Open launchpad</button>
+    <button id="rescan" title="Rescan the apps on this system">Rescan</button>
+    <button id="debug" title="Run individual shell calls on this system and inspect their raw output">Debug</button>
+    <span class="spacer"></span>
+    <button id="close">Close</button>
+  </footer>
+  <script type="module" src="sysinfo.js"></script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 // Legacy transaction code mapping. Pure module.
 // 1. applyTcodeTable: merges the curated tcodes.csv rows into seed/library entries.
-// 2. guessIntentsForTcode: pattern-based best guess for codes not in the table.
+// 2. applyAppMap: merges the t-code → Fiori app table (tcode-apps.json) by app ID, then by app title.
+// 3. guessIntentsForTcode: pattern-based best guess for codes not in the tables.
 //    The resolver only offers a guess when that intent exists on the target tenant.
 
 /** Ordered prefix rules: [regex on normalised code, semantic objects (best first)] */
@@ -125,7 +126,8 @@ export function makeGuesser() {
 
 /**
  * applyTcodeTable(entries, rows) → entries (new array, shallow copies).
- * Each table row attaches its tcode to every entry with the same intent (or, failing that, the same appId).
+ * Each table row attaches its tcode to the entries with the same intent, narrowed to the row's app ID when one of them
+ * carries it; failing any intent match, to the entries with that app ID.
  * Rows without a matching entry become their own seed entry so they resolve before any scan.
  */
 export function applyTcodeTable(entries, rows) {
@@ -140,8 +142,13 @@ export function applyTcodeTable(entries, rows) {
   for (const r of rows || []) {
     const intent = `${r.semanticObject}-${r.action}`;
     const tcode = String(r.tcode).toLowerCase();
-    let targets = byIntent.get(intent.toLowerCase()) || [];
-    if (!targets.length && r.appId) targets = byAppId.get(r.appId.toLowerCase()) || [];
+    // intent first, narrowed by the app ID when both are known: generic intents such as ApplicationLog-showList are
+    // shared by unrelated apps, so a row naming F1487 attaches to F1487 alone. An app ID the intent's entries lack is
+    // treated as a stale guess and the intent wins; the app ID alone counts only when the intent is unknown here.
+    const intentTargets = byIntent.get(intent.toLowerCase()) || [];
+    const idTargets = r.appId ? byAppId.get(r.appId.toLowerCase()) || [] : [];
+    const both = intentTargets.filter((e) => idTargets.includes(e));
+    const targets = both.length ? both : intentTargets.length ? intentTargets : idTargets;
     if (targets.length) {
       for (const t of targets) {
         if (!t.tcodes.includes(tcode)) t.tcodes.push(tcode);
@@ -168,4 +175,50 @@ export function applyTcodeTable(entries, rows) {
     add(byAppId, e.appId, e);
   }
   return out;
+}
+
+/**
+ * applyAppMap(entries, rows) → { entries, unmapped }
+ * rows: [{ tcode, app, appId, module, description, idVerified, notes }] – a t-code → successor-app table that names
+ * apps, not intents. Each code is attached to the app's primary library entry (the one whose alias is the app ID; the
+ * "-2", "-3" variants of multi-intent apps are left alone so one code does not produce nine hits). Without an app ID,
+ * or when the ID is not in the library, the app title is matched instead; a title shared by several apps attaches to
+ * each app's primary entry (at most 3). An app ID the table marks unverified (idVerified false) is only trusted when the
+ * library entry's title agrees with the table's app name, since such IDs are guesses (STMS → F3408 names "Import
+ * Collection" while the library's F3408 is "Predicted Delivery Delay"). Codes that match nothing are reported in
+ * `unmapped` and otherwise ignored.
+ */
+export function applyAppMap(entries, rows) {
+  const out = (entries || []).map((e) => ({ ...e, tcodes: [...(e.tcodes || [])] }));
+  const lcs = (v) => String(v ?? '').trim().toLowerCase();
+  const byAppId = new Map();
+  const byTitle = new Map();
+  const push = (map, key, e) => { if (!key) return; if (!map.has(key)) map.set(key, []); map.get(key).push(e); };
+  for (const e of out) {
+    push(byAppId, lcs(e.appId), e);
+    push(byTitle, lcs(e.title), e);
+  }
+  const primaryOf = (list) => {
+    const prim = list.filter((e) => e.appId && lcs(e.alias) === lcs(e.appId));
+    return prim.length ? prim : list;
+  };
+  const words = (v) => lcs(v).replace(/[^a-z0-9]+/g, ' ').trim();
+  const sameApp = (title, app) => { const a = words(title); const b = words(app); return Boolean(a && b) && (a === b || a.startsWith(b) || b.startsWith(a)); };
+  const unmapped = [];
+  for (const r of rows || []) {
+    const tcode = lcs(r.tcode);
+    if (!tcode) continue;
+    let byId = r.appId ? byAppId.get(lcs(r.appId)) || [] : [];
+    if (byId.length && r.idVerified !== true) byId = byId.filter((e) => sameApp(e.title, r.app));
+    let targets = primaryOf(byId);
+    if (!targets.length) {
+      const titled = byTitle.get(lcs(r.app)) || [];
+      const groups = new Map();
+      for (const e of titled) push(groups, lcs(e.appId) || lcs(e.intent || `${e.semanticObject}-${e.action}`), e);
+      targets = [...groups.values()].slice(0, 3).flatMap((g) => primaryOf(g).slice(0, 1));
+    }
+    if (!targets.length) { unmapped.push({ tcode: r.tcode, app: r.app || null, appId: r.appId || null }); continue; }
+    for (const t of targets) if (!t.tcodes.includes(tcode)) t.tcodes.push(tcode);
+  }
+  return { entries: out, unmapped };
 }

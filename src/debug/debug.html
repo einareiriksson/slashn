@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Shell debug – slashn</title>
+  <link rel="stylesheet" href="../sysinfo/sysinfo.css">
+  <link rel="stylesheet" href="debug.css">
+</head>
+<body>
+  <header>
+    <div>
+      <div class="title">Shell debug</div>
+      <div class="muted">Runs a launchpad API call in an open tab of the chosen system and shows the raw answer.</div>
+    </div>
+  </header>
+  <div class="row">
+    <label>System <select id="system"></select></label>
+    <label class="grow">Call <select id="call"></select></label>
+  </div>
+  <div id="hint" class="muted small"></div>
+  <label class="params">Params <textarea id="params" rows="3" spellcheck="false"></textarea></label>
+  <div class="row">
+    <button id="run" class="primary">Run</button>
+    <button id="run-group">Run whole group</button>
+    <span class="spacer"></span>
+    <button id="copy">Copy output</button>
+    <button id="clear">Clear</button>
+  </div>
+  <div id="notice" class="notice" hidden></div>
+  <div id="out"></div>
+  <footer>
+    <span id="status" class="muted small"></span>
+    <span class="spacer"></span>
+    <button id="close">Close</button>
+  </footer>
+  <script type="module" src="debug.js"></script>
+</body>
+</html>

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "slashn",
-  "version": "0.1.0",
-  "description": "slashn: type `s <system> <alias>` in the address bar to jump straight to a Fiori app on an S/4HANA Cloud tenant.",
+  "version": "1.0.0",
+  "description": "Launch SAP Fiori apps and classic transactions by alias or t-code: address bar, toolbar or Alt+Shift+S, on cloud and on-premise.",
   "minimum_chrome_version": "120",
   "icons": {
     "16": "icons/icon16.png",
@@ -23,7 +23,8 @@
     "clipboardWrite",
     "scripting",
     "unlimitedStorage",
-    "activeTab"
+    "activeTab",
+    "tabs"
   ],
   "host_permissions": [
     "https://*.s4hana.cloud.sap/*"
@@ -54,7 +55,6 @@
     }
   ],
   "action": {
-    "default_popup": "src/popup/popup.html",
     "default_title": "slashn",
     "default_icon": {
       "16": "icons/icon16.png",
@@ -64,5 +64,25 @@
   "optional_host_permissions": [
     "https://*/*",
     "http://*/*"
+  ],
+  "commands": {
+    "open-launcher": {
+      "suggested_key": {
+        "default": "Alt+Shift+S",
+        "mac": "Alt+Shift+S"
+      },
+      "description": "Open the slashn launcher (an overlay on the page, or a centred window where the page cannot be scripted)"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/popup/popup.html"
+      ],
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ]
+    }
   ]
 }

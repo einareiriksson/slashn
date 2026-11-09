@@ -1,12 +1,14 @@
 // slashn — MV3 service worker.
 // Omnibox handling, alias resolution, navigation, seed loading, discovery bookkeeping, rescan orchestration.
 import { MSG, LOG_PREFIX } from './messages.js';
-import { createStorage, isDefaultHost, originPattern, sanitizeSystemInfo } from './storage.js';
+import { createStorage, isDefaultHost, originPattern, looksLikeLaunchpad, sanitizeDiscoveredRecord } from './storage.js';
 import {
   parseInput, mergeEntries, buildIndex, rank, buildUrl, homeUrl, appFinderUrl, isOnHost,
   formatSuggestion, formatSystemSuggestion, formatDefaultDescription, MATCH,
 } from './resolver.js';
 import { makeGuesser } from './tcodes.js';
+import { probeTab } from './probe.js';
+import { runDebugCallInPage, debugCallById } from './debug.js';
 
 const storage = createStorage();
 const guesser = makeGuesser();
@@ -17,6 +19,8 @@ let cachePromise = null;
 let latestInput = null;
 let contextKey = null; // system key of the tab the omnibox session started on
 const LIVE_CHECK_TIMEOUT_MS = 3000;
+const SYSTEM_INFO_WINDOW = { width: 560, height: 680 };
+const DEBUG_WINDOW = { width: 760, height: 760 };
 
 // ---------------------------------------------------------------- listeners (must be registered synchronously)
 
@@ -26,6 +30,15 @@ chrome.runtime.onInstalled.addListener((details) => {
 chrome.runtime.onStartup?.addListener(() => {
   ensureSeed({ force: false }).catch((e) => warn('seed check failed', e));
   syncContentScripts().catch((e) => warn('content script sync failed', e));
+  refreshActionForAllTabs().catch((e) => warn('action state failed', e));
+});
+// toolbar button: greyed out on pages that are not a SAP launchpad (setting actionOnlyOnSap, default on)
+chrome.tabs?.onActivated?.addListener(({ tabId }) => {
+  chrome.tabs.get(tabId).then(applyActionState).catch((e) => warn('action state failed', e));
+});
+chrome.tabs?.onUpdated?.addListener((tabId, changeInfo, tab) => {
+  // Chrome clears per-tab button state when the navigation commits, which can be after "loading"; "complete" re-applies it.
+  if (changeInfo.url || changeInfo.status === 'loading' || changeInfo.status === 'complete') applyActionState(tab).catch((e) => warn('action state failed', e));
 });
 chrome.omnibox.onInputStarted.addListener(() => {
   contextKey = null;
@@ -51,11 +64,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 chrome.storage.onChanged.addListener((changes, area) => {
   cachePromise = null;
   if (area === 'sync' && changes.systems) syncContentScripts().catch((e) => warn('content script sync failed', e));
+  if (area === 'sync' && (changes.systems || changes.settings)) refreshActionForAllTabs().catch((e) => warn('action state failed', e));
+});
+chrome.commands?.onCommand?.addListener((command) => {
+  if (command === 'open-launcher') openLauncher().catch((e) => warn('launcher failed', e));
+});
+// the toolbar button has no default popup: a click opens the same overlay as the shortcut (activeTab is granted by the click)
+chrome.action?.onClicked?.addListener((tab) => {
+  openLauncher(tab).catch((e) => warn('launcher failed', e));
 });
 chrome.permissions?.onAdded?.addListener(() => syncContentScripts().catch((e) => warn('content script sync failed', e)));
 chrome.permissions?.onRemoved?.addListener(() => syncContentScripts().catch((e) => warn('content script sync failed', e)));
 
 log('service worker ready');
+// the global default (disabled when the setting is on) lives in the worker, which Chrome restarts often: set it on every start
+refreshActionForAllTabs().catch((e) => warn('action state failed', e));
 
 // ---------------------------------------------------------------- install / seed
 
@@ -64,6 +87,8 @@ async function onInstalled(details) {
   await storage.migrate();
   await ensureSeed({ force: true });
   await syncContentScripts();
+  await refreshActionForAllTabs();
+  if (details.reason === 'install') await chrome.runtime.openOptionsPage?.().catch?.((e) => warn('options page failed', e)); // first run: add a system
 }
 
 /**
@@ -107,9 +132,12 @@ async function ensureSeed({ force }) {
       return '';
     }
   };
-  const [aliasesCsv, libraryCsv, tcodesCsv] = await Promise.all([read('src/seed/aliases.csv'), read('src/seed/library.csv'), read('src/seed/tcodes.csv')]);
-  const result = await storage.applySeed({ aliasesCsv, libraryCsv, tcodesCsv, version, force });
-  if (result.applied) log('seed applied', result.count, 'entries', result.errors.length ? result.errors : '');
+  const [aliasesCsv, libraryCsv, tcodesCsv, tcodeAppsJson] = await Promise.all([read('src/seed/aliases.csv'), read('src/seed/library.csv'), read('src/seed/tcodes.csv'), read('src/seed/tcode-apps.json')]);
+  const result = await storage.applySeed({ aliasesCsv, libraryCsv, tcodesCsv, tcodeAppsJson, version, force });
+  if (result.applied) {
+    const problems = result.errors.filter((e) => !e.info);
+    log('seed applied', result.count, 'entries', problems.length ? problems : '', result.errors.length - problems.length, 'app-map codes without a library app');
+  }
   return result;
 }
 
@@ -140,12 +168,108 @@ function indexFor(cache, system) {
   return cache.indexByHost.get(host);
 }
 
+/** Intents launched lately on this system, most recent first (repeats kept: they count as frequency), for the ranking. */
+function recentIntentsFor(cache, system) {
+  return (cache.recent || []).filter((r) => r.host === system.host && r.intent && !/^Shell-/i.test(r.intent)).map((r) => r.intent);
+}
+
+/**
+ * Classic transactions (#Shell-startGUI?sap-ui2-tcode=) are offered on On-Premise and Private Cloud systems only; Public Cloud
+ * exposes the intent but almost no transactions. After a scan, only when the tenant actually offers Shell-startGUI.
+ */
+function guiFor(cache, system) {
+  const entries = cache.discovered?.[system.host]?.entries || [];
+  const available = entries.length ? entries.some((e) => /^shell-startgui$/i.test(String(e.intent || ''))) : null;
+  return { enabled: (system.edition || 'onprem') !== 'public', available };
+}
+
 function systemByHost(systems, host) {
   const h = String(host || '').toLowerCase();
   return systems.find((s) => s.host === h) ?? null;
 }
 
 /** Host (with port) of the active tab; undefined when the extension may not see that tab's URL. */
+// ---------------------------------------------------------------- toolbar button state
+
+const ACTION_ICON = Object.freeze({
+  on: { 16: 'icons/icon16.png', 32: 'icons/icon32.png' },
+  off: { 16: 'icons/icon-off16.png', 32: 'icons/icon-off32.png' },
+});
+const iconPixels = new Map(); // 'on' | 'off' → { 16: ImageData, 32: ImageData }
+
+/**
+ * setIcon({ path }) fetches and decodes the file inside Chrome; that silently yields nothing for some PNGs (the red
+ * tiles came back as 0 bytes). Decoding here and passing pixels makes the result deterministic and failures loud.
+ */
+async function iconImageData(which) {
+  if (iconPixels.has(which)) return iconPixels.get(which);
+  const out = {};
+  for (const [size, path] of Object.entries(ACTION_ICON[which])) {
+    const res = await fetch(chrome.runtime.getURL(path));
+    if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+    const bitmap = await createImageBitmap(await res.blob());
+    const canvas = new OffscreenCanvas(Number(size), Number(size));
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, Number(size), Number(size));
+    out[size] = ctx.getImageData(0, 0, Number(size), Number(size));
+  }
+  iconPixels.set(which, out);
+  return out;
+}
+
+async function setActionIcon(which, tabId = null) {
+  const target = tabId == null ? {} : { tabId };
+  try {
+    await chrome.action.setIcon({ ...target, imageData: await iconImageData(which) });
+  } catch (e) {
+    warn('action icon (pixels) failed, falling back to path', which, tabId, e);
+    await chrome.action.setIcon({ ...target, path: ACTION_ICON[which] });
+  }
+}
+// Chrome draws a disabled action with the *default* icon, ignoring the tab's own, so the default is the red tile
+// whenever the setting is on and SAP tabs get the blue one per tab after being enabled.
+const OFF_TITLE = 'slashn – not on a SAP launchpad (the address bar still works: type s, space, alias)';
+
+/** A registered system's host, or any page that looks like a Fiori launchpad (so "Add as system" stays reachable). */
+export function isSapTab(url, systems) {
+  if (!url || !/^https?:/i.test(url)) return false;
+  let host = '';
+  try { host = new URL(url).host.toLowerCase(); } catch { return false; }
+  return Boolean(systemByHost(systems, host)) || looksLikeLaunchpad(url);
+}
+
+/** Enables or disables the toolbar button for one tab. Chrome clears per-tab state on navigation, so onUpdated re-applies it. */
+async function applyActionState(tab) {
+  if (!chrome.action || !tab || tab.id == null) return;
+  const cache = await getCache();
+  const on = cache.settings.actionOnlyOnSap === false || isSapTab(tab.url, cache.systems);
+  // title first: it is the one state visible in the tooltip, so it must land even if the icon or enable call fails
+  await chrome.action.setTitle({ tabId: tab.id, title: on ? 'slashn' : OFF_TITLE });
+  if (on) await chrome.action.enable(tab.id); else await chrome.action.disable(tab.id);
+  try {
+    await setActionIcon(on ? 'on' : 'off', tab.id);
+  } catch (e) {
+    warn('action icon failed', tab.id, e);
+  }
+}
+
+/** Global default plus every open tab: run at install, start-up and whenever systems or settings change. */
+async function refreshActionForAllTabs() {
+  if (!chrome.action) return;
+  const cache = await getCache();
+  const everywhere = cache.settings.actionOnlyOnSap === false;
+  // the defaults, which also cover the moment after a navigation commits and Chrome has dropped the tab's own state
+  await chrome.action.setTitle({ title: everywhere ? 'slashn' : OFF_TITLE });
+  if (everywhere) await chrome.action.enable(); else await chrome.action.disable();
+  try {
+    await setActionIcon(everywhere ? 'on' : 'off');
+  } catch (e) {
+    warn('default action icon failed', e);
+  }
+  const tabs = await chrome.tabs.query({});
+  await Promise.all(tabs.map((t) => applyActionState(t).catch((e) => warn('action state failed', t.id, e))));
+}
+
 async function activeTabHost() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -186,7 +310,7 @@ async function onInputChanged(text, suggest) {
       suggest([]);
       return;
     }
-    const matches = rank(parsed, indexFor(cache, parsed.system), { limit: cache.settings.suggestionLimit, guesser });
+    const matches = rank(parsed, indexFor(cache, parsed.system), { limit: cache.settings.suggestionLimit, guesser, gui: guiFor(cache, parsed.system), recentIntents: recentIntentsFor(cache, parsed.system) });
     setDefault(formatDefaultDescription(parsed, matches[0] ?? null));
     const seen = new Set();
     const suggestions = [];
@@ -204,6 +328,25 @@ async function onInputChanged(text, suggest) {
 
 async function onInputEntered(text, disposition) {
   return launch(text, disposition);
+}
+
+/**
+ * The launchpad tab a scan requested by the user should run in: the tab the launcher sits on when it is one, else a tab
+ * of `system` in the caller's window (the active one first). A tab in another window is left alone – the user asked
+ * from this window and must see the scan happen – so null means "open a new tab here".
+ */
+async function rescanTab(system, contextTabId, windowId) {
+  const pattern = originPattern(system);
+  const prefix = pattern.replace(/\*$/, '');
+  if (contextTabId != null) {
+    const t = await chrome.tabs.get(contextTabId).catch(() => null);
+    if (t?.url && t.url.toLowerCase().startsWith(prefix)) return t;
+  }
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: pattern }); } catch { return null; }
+  if (windowId != null) tabs = tabs.filter((t) => t.windowId === windowId);
+  tabs.sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
+  return tabs[0] || null;
 }
 
 /**
@@ -247,7 +390,7 @@ async function noteMismatch(system, entry, live) {
  * else by the last scan – nothing is opened and { action:'blocked' } is returned so the UI can ask once; force=true overrides.
  * The omnibox has no way to ask, so it always opens and lets the launchpad show its own error.
  */
-async function launch(text, disposition, preferredKey = contextKey, { confirm = false, force = false } = {}) {
+async function launch(text, disposition, preferredKey = contextKey, { confirm = false, force = false, contextTabId = null } = {}) {
   const cache = await getCache();
   const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey, preferredKey });
   const system = parsed.system;
@@ -260,12 +403,12 @@ async function launch(text, disposition, preferredKey = contextKey, { confirm = 
     await remember({ systemKey: system.key, host: system.host, intent: 'Shell-home', alias: null, title: 'Launchpad home', url: homeUrl(system), input: text });
     return { action: 'home', url: homeUrl(system) };
   }
-  const matches = rank(parsed, indexFor(cache, system), { limit: 1, guesser });
+  const matches = rank(parsed, indexFor(cache, system), { limit: 1, guesser, gui: guiFor(cache, system), recentIntents: recentIntentsFor(cache, system) });
   const top = matches[0];
   if (!top) {
     const url = appFinderUrl(system);
-    await navigate(url, system, disposition, cache.settings);
-    await copyToClipboard(parsed.query);
+    await navigate(url, system, disposition, cache.settings, contextTabId);
+    if (cache.settings.copyUnresolved) await copyToClipboard(parsed.query); // opt-in: it replaces whatever is on the clipboard
     await remember({ systemKey: system.key, host: system.host, intent: 'Shell-appfinder', alias: null, title: `App Finder (unresolved "${parsed.query}")`, url, input: text, unresolved: parsed.query });
     return { action: 'appfinder', url };
   }
@@ -286,7 +429,7 @@ async function launch(text, disposition, preferredKey = contextKey, { confirm = 
       };
     }
   }
-  await navigate(url, system, disposition, cache.settings);
+  await navigate(url, system, disposition, cache.settings, contextTabId);
   await remember({
     systemKey: system.key, host: system.host, intent: top.entry.intent, alias: top.entry.alias, title: top.entry.title,
     url, input: text, param: top.param, matchType: top.type, guess: top.type === MATCH.TCODE_GUESS || top.entry.confidence === 'low',
@@ -298,7 +441,10 @@ async function launch(text, disposition, preferredKey = contextKey, { confirm = 
 const plainText = (s) => String(s).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
 /** Structured resolution for the popup (no omnibox XML). */
-async function resolveForPopup(text, contextHost = null) {
+/** Popup source filter → entry.source values; unknown or 'all' → no filter. */
+const SOURCE_FILTERS = Object.freeze({ mine: ['user', 'import'], discovered: ['discovered'], seed: ['seed'], library: ['library'] });
+
+async function resolveForPopup(text, contextHost = null, availableOnly = false, source = 'all') {
   const cache = await getCache();
   const preferredKey = systemByHost(cache.systems, contextHost)?.key ?? null;
   const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey, preferredKey });
@@ -307,23 +453,40 @@ async function resolveForPopup(text, contextHost = null) {
     return { kind: 'systems', system, hint: 'Pick a system', matches: cache.systems.map((s) => ({ content: s.key, alias: s.key, title: s.name || s.host, intent: '', systemKey: s.key, tag: `${s.env} · ${s.host}` })) };
   }
   if (!system || parsed.kind !== 'query') return { kind: parsed.kind, system, hint: plainText(formatDefaultDescription(parsed)), matches: [] };
-  const matches = rank(parsed, indexFor(cache, parsed.system), { limit: 8, guesser });
+  // "available only" needs a scan to judge against; before one, every row is unverified and the filter is ignored
+  const scannedAt = cache.scanMeta?.[parsed.system.host]?.lastScanned || null;
+  const filtered = Boolean(availableOnly && scannedAt);
+  const sources = SOURCE_FILTERS[source] || null;
+  const matches = rank(parsed, indexFor(cache, parsed.system), { limit: 8, guesser, gui: guiFor(cache, parsed.system), availableOnly: filtered, sources, recentIntents: recentIntentsFor(cache, parsed.system) });
+  const notice = availableOnly && !scannedAt ? `${parsed.system.key} has not been scanned yet – showing all apps`
+    : filtered && !matches.length ? `No app found in the last scan of ${parsed.system.key} – turn the filter off to see everything`
+    : sources && !matches.length ? `Nothing from "${source}" matches – set the source to all`
+    : null;
   return {
     kind: 'query',
     system,
-    hint: plainText(formatDefaultDescription(parsed, matches[0] ?? null)),
+    hint: notice || plainText(formatDefaultDescription(parsed, matches[0] ?? null)),
+    hintKind: notice ? 'notice' : 'default', // the popup shows a default hint only when Enter would do something non-obvious
+    terms: { head: parsed.head, query: parsed.query }, // what the popup highlights in each row
+    filtered,
+    source: sources ? source : 'all',
     matches: matches.map((m) => ({
       content: formatSuggestion(m, parsed.system).content,
       alias: m.entry.alias ?? m.entry.intent,
       title: m.entry.title,
       intent: m.entry.intent,
+      appId: m.entry.appId || null,
+      tcodes: m.entry.tcodes || [],
+      source: m.entry.source || null, // user | import | discovered | seed | library | gui
+      matchType: m.type, // alias | tcode | appId | intent | tcodeGuess | keyPrefix | titlePrefix | titleFuzzy | gui
       param: m.param,
       systemKey: parsed.system.key,
       guess: m.type === MATCH.TCODE_GUESS || m.entry.confidence === 'low',
+      gui: m.type === MATCH.GUI,
       onTenant: m.entry.onTarget === true,
       missing: m.entry.onTarget === false,
     })),
-    scannedAt: cache.scanMeta?.[parsed.system.host]?.lastScanned || null,
+    scannedAt,
   };
 }
 
@@ -340,17 +503,130 @@ async function remember(launch) {
  * Chrome reports: plain Enter → "currentTab", Alt+Enter → "newForegroundTab", Ctrl/Cmd+Enter → "newBackgroundTab".
  * currentTab reuses the active tab only when it is already on the target host (hash-only navigation, no reload).
  */
-async function navigate(url, system, disposition, settings) {
+/**
+ * `contextTabId` is the tab the user was on when the launcher window (or popup) opened: the launcher is its own window,
+ * so "the active tab of the focused window" would be the launcher itself. New tabs then open next to that tab.
+ */
+async function navigate(url, system, disposition, settings, contextTabId = null) {
+  let tab = null;
+  if (contextTabId != null) {
+    try { tab = await chrome.tabs.get(contextTabId); } catch { tab = null; }
+  }
+  if (!tab) [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const where = tab?.windowId != null && contextTabId != null ? { windowId: tab.windowId } : {};
   if (disposition !== 'currentTab') {
-    await chrome.tabs.create({ url, active: disposition === 'newForegroundTab' });
+    await chrome.tabs.create({ url, active: disposition === 'newForegroundTab', ...where });
     return;
   }
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (tab && settings.reuseTabOnSameHost !== false && isOnHost(tab.url, system)) {
     await chrome.tabs.update(tab.id, { url });
+    if (contextTabId != null) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
     return;
   }
-  await chrome.tabs.create({ url, active: true });
+  await chrome.tabs.create({ url, active: true, ...where });
+}
+
+// ---------------------------------------------------------------- launcher window (keyboard command)
+
+const LAUNCHER = { width: 640, height: 620 };
+
+/**
+ * Runs inside the page (injected with chrome.scripting, so it must be self-contained): a lightly dimmed backdrop over
+ * the page (not blurred, so the page stays readable) with the launcher page floating in a frosted-glass iframe – the Spotlight look a separate window cannot have.
+ * Calling it again while open closes it (the shortcut toggles). The iframe asks to be closed by posting
+ * { ns: 'SAPQS', type: 'CLOSE' }; Esc and a click on the backdrop close it too.
+ */
+function showLauncherOverlay(src, width, height, blur = false) {
+  const ID = 'sapqs-launcher';
+  const existing = document.getElementById(ID);
+  if (existing) { existing.remove(); return 'closed'; }
+  const host = document.createElement('div');
+  host.id = ID;
+  host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;';
+  const root = host.attachShadow({ mode: 'closed' });
+  const origin = new URL(src).origin;
+  const style = document.createElement('style');
+  style.textContent = `
+    .back { position: fixed; inset: 0; background: rgba(15, 20, 28, ${blur ? '.28' : '.18'}); animation: sapqs-in .12s ease-out; ${blur ? 'backdrop-filter: blur(8px) saturate(1.1); -webkit-backdrop-filter: blur(8px) saturate(1.1);' : ''} } /* a light dim by default so the page stays readable; the blur is a setting */
+    .panel { position: fixed; left: 50%; top: 13vh; transform: translateX(-50%); width: ${width}px; height: ${height}px; max-width: calc(100vw - 32px); max-height: calc(100vh - 15vh); border-radius: 16px; overflow: hidden; box-shadow: 0 24px 80px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.12); opacity: 0; transition: height .16s ease-out; }
+    .panel.ready { animation: sapqs-pop .14s ease-out; opacity: 1; } /* shown once the launcher has reported its first size: no jump from the full height, no half-rendered stages */
+    iframe { width: 100%; height: 100%; border: 0; background: transparent; color-scheme: light dark; }
+    .panel { backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2); }
+    @keyframes sapqs-in { from { opacity: 0 } to { opacity: 1 } }
+    @keyframes sapqs-pop { from { opacity: 0; transform: translateX(-50%) scale(.97) } to { opacity: 1; transform: translateX(-50%) scale(1) } }`;
+  const back = document.createElement('div');
+  back.className = 'back';
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  const frame = document.createElement('iframe');
+  frame.src = src;
+  frame.setAttribute('allowtransparency', 'true');
+  frame.setAttribute('title', 'slashn launcher');
+  panel.appendChild(frame);
+  root.append(style, back, panel);
+  const close = () => { clearTimeout(fallback); host.remove(); window.removeEventListener('message', onMessage); document.removeEventListener('keydown', onKey, true); };
+  const reveal = () => panel.classList.add('ready');
+  const fallback = setTimeout(reveal, 700); // the launcher could not report (blocked, failed): show it anyway
+  const onMessage = (ev) => {
+    if (ev.origin !== origin || !ev.data || ev.data.ns !== 'SAPQS') return;
+    if (ev.data.type === 'CLOSE') close();
+    if (ev.data.type === 'SIZE' && Number.isFinite(ev.data.height)) {
+      panel.style.height = Math.max(160, Math.min(height, Math.ceil(ev.data.height))) + 'px'; // shrink to the rows, grow up to the maximum (animated)
+      clearTimeout(fallback);
+      reveal();
+    }
+  };
+  const onKey = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); } };
+  back.addEventListener('click', close);
+  window.addEventListener('message', onMessage);
+  document.addEventListener('keydown', onKey, true);
+  (document.body || document.documentElement).appendChild(host);
+  // the caret: focus the frame element, then tell the launcher page to focus its input (a document inside a frame that
+  // was not focused when it ran its own focus() has no caret); repeat briefly, the page may still be loading
+  const giveFocus = () => { try { frame.focus(); frame.contentWindow.focus(); frame.contentWindow.postMessage({ ns: 'SAPQS', type: 'FOCUS' }, origin); } catch { /* not ready */ } };
+  frame.addEventListener('load', () => { giveFocus(); setTimeout(giveFocus, 60); setTimeout(giveFocus, 250); });
+  giveFocus();
+  return 'opened';
+}
+
+/**
+ * The keyboard command: an in-page overlay (transparent, blurred) on ordinary pages, where the activeTab grant lets
+ * us script the page; a small centred window on pages that cannot be scripted (chrome://, the Web Store, PDFs).
+ */
+async function openLauncher(clickedTab = null, note = null) {
+  let win = null;
+  try { win = clickedTab?.windowId != null ? await chrome.windows.get(clickedTab.windowId, { populate: true }) : await chrome.windows.getLastFocused({ windowTypes: ['normal'], populate: true }); } catch { win = null; }
+  const tab = clickedTab || win?.tabs?.find((t) => t.active) || null;
+  const base = chrome.runtime.getURL('src/popup/popup.html');
+  // popup.html is web-accessible so the overlay can frame it, which means any web page can frame it too. The page
+  // renders only after presenting this nonce (LAUNCHER_HELLO); the frame URL sits in a closed shadow root, so the
+  // host page cannot read it, and a frame a web page adds on its own stays blank.
+  const nonce = crypto.randomUUID();
+  await storage.setLauncherNonce(nonce);
+  if (tab?.id != null && /^https?:/i.test(tab.url || '')) {
+    const q = new URLSearchParams({ mode: 'overlay', tab: String(tab.id), nonce });
+    if (note) q.set('note', note);
+    try {
+      const { settings } = await getCache();
+      const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: showLauncherOverlay, args: [`${base}?${q}`, LAUNCHER.width, LAUNCHER.height, settings.overlayBlur === true] });
+      return { mode: 'overlay', tabId: tab.id, result: res?.result ?? null };
+    } catch (e) {
+      log('overlay not possible here, using a window', tab.url, e?.message || e);
+    }
+  }
+  // one launcher at a time: close a stale one so the new one carries the current tab
+  try {
+    const open = await chrome.runtime.getContexts({ contextTypes: ['TAB'] });
+    for (const c of open) if (c.documentUrl?.startsWith(base + '?') && c.windowId != null) await chrome.windows.remove(c.windowId).catch(() => {});
+  } catch (e) { log('getContexts unavailable', e); }
+  const q = new URLSearchParams({ mode: 'launcher', nonce });
+  if (tab?.id != null) q.set('tab', String(tab.id));
+  if (note) q.set('note', note);
+  const bounds = win && Number.isFinite(win.left) && Number.isFinite(win.width)
+    ? { left: Math.max(0, Math.round(win.left + (win.width - LAUNCHER.width) / 2)), top: Math.max(0, Math.round(win.top + Math.max(0, win.height - LAUNCHER.height) / 6)) }
+    : {};
+  const created = await chrome.windows.create({ url: `${base}?${q}`, type: 'popup', focused: true, ...LAUNCHER, ...bounds });
+  return { windowId: created?.id ?? null, tabId: tab?.id ?? null };
 }
 
 // ---------------------------------------------------------------- clipboard (offscreen document)
@@ -376,29 +652,6 @@ async function copyToClipboard(text) {
 
 // ---------------------------------------------------------------- messages
 
-const INTENT_RE = /^[A-Za-z0-9_]+-[A-Za-z0-9_]+$/;
-const MAX_ENTRIES = 5000;
-
-function sanitizeEntries(entries) {
-  if (!Array.isArray(entries)) return [];
-  const out = [];
-  for (const e of entries.slice(0, MAX_ENTRIES)) {
-    if (!e || typeof e.intent !== 'string') continue;
-    const intent = e.intent.replace(/^#/, '').split('?')[0];
-    if (!INTENT_RE.test(intent)) continue;
-    const [semanticObject, action] = intent.split(/-(.*)/s);
-    out.push({
-      intent,
-      semanticObject,
-      action,
-      title: typeof e.title === 'string' ? e.title.slice(0, 200) : intent,
-      appId: typeof e.appId === 'string' ? e.appId.slice(0, 40) : null,
-      paramKey: typeof e.paramKey === 'string' ? e.paramKey.slice(0, 80) : null,
-    });
-  }
-  return out;
-}
-
 async function handleMessage(msg, sender) {
   if (sender.id !== chrome.runtime.id) return { error: 'foreign sender' };
   switch (msg.type) {
@@ -417,40 +670,51 @@ async function handleMessage(msg, sender) {
       return { scan, reason };
     }
     case MSG.DISCOVERY_RESULT: {
+      // only a content script may report a scan, and only for the host its tab is on
+      if (!sender?.tab) return { stored: 0, error: 'not from a tab' };
+      const fromHost = (() => { try { return sender.tab.url ? new URL(sender.tab.url).host.toLowerCase() : null; } catch { return null; } })();
+      if (fromHost && fromHost !== String(msg.host || '').toLowerCase()) return { stored: 0, error: 'host mismatch' };
       const cache = await getCache();
       const system = systemByHost(cache.systems, msg.host);
       if (!system) return { stored: 0, error: 'unregistered host' };
-      const entries = sanitizeEntries(msg.entries);
-      await storage.setDiscovered(system.host, {
-        scannedAt: new Date().toISOString(),
-        ui5Version: typeof msg.ui5Version === 'string' ? msg.ui5Version : null,
-        system: sanitizeSystemInfo(msg.system),
-        methods: msg.methods && typeof msg.methods === 'object' ? msg.methods : {},
-        errors: Array.isArray(msg.errors) ? msg.errors.slice(0, 20).map(String) : [],
-        entries,
-      });
+      const record = sanitizeDiscoveredRecord({ scannedAt: new Date().toISOString(), ui5Version: msg.ui5Version, system: msg.system, methods: msg.methods, errors: msg.errors, entries: msg.entries });
+      const { entries } = record;
+      await storage.setDiscovered(system.host, record);
       cachePromise = null;
       log('discovery stored', system.key, entries.length);
+      const reopen = await storage.getReopenLauncher();
+      if (reopen?.host === system.host && Date.now() - reopen.ts < 5 * 60000 && sender?.tab?.id != null) {
+        await storage.setReopenLauncher(null);
+        openLauncher(sender.tab, `Scanned ${system.key}: ${entries.length} apps`).catch((e) => warn('launcher failed', e));
+      }
       return { stored: entries.length };
     }
     case MSG.RESCAN_HOST: {
       const cache = await getCache();
       const system = systemByHost(cache.systems, msg.host);
       if (!system) return { status: 'error', error: 'unregistered host' };
-      const tabs = await chrome.tabs.query({ url: originPattern(system) });
-      if (tabs.length) {
+      // from the launcher: the reload takes the overlay with it, so bring it back once the scan has landed
+      await storage.setReopenLauncher(msg.reopenLauncher ? system.host : null);
+      const windowId = sender?.tab?.windowId ?? (await chrome.windows.getLastFocused().catch(() => null))?.id ?? null;
+      const tab = await rescanTab(system, Number.isInteger(msg.contextTabId) ? msg.contextTabId : null, windowId);
+      if (tab) {
         try {
-          await chrome.tabs.sendMessage(tabs[0].id, { type: MSG.RESCAN_TAB });
+          await chrome.tabs.sendMessage(tab.id, { type: MSG.RESCAN_TAB });
           return { status: 'messaged' };
         } catch {
+          // no content script in that tab (it predates the grant): a fresh tab scans; reloading could discard unsaved work
           await storage.setPendingRescan(system.host, true);
-          await chrome.tabs.reload(tabs[0].id);
-          return { status: 'reloaded' };
+          await chrome.tabs.create({ url: homeUrl(system), active: true, ...(tab.windowId != null ? { windowId: tab.windowId } : {}) });
+          return { status: 'opened' };
         }
       }
       await storage.setPendingRescan(system.host, true);
-      await chrome.tabs.create({ url: homeUrl(system), active: true });
+      await chrome.tabs.create({ url: homeUrl(system), active: true, ...(windowId != null ? { windowId } : {}) });
       return { status: 'opened' };
+    }
+    case MSG.LAUNCHER_HELLO: {
+      const nonce = await storage.getLauncherNonce();
+      return { ok: Boolean(nonce) && typeof msg.nonce === 'string' && msg.nonce === nonce };
     }
     case MSG.GET_STATE: {
       const cache = await getCache();
@@ -458,10 +722,10 @@ async function handleMessage(msg, sender) {
       return { snapshot };
     }
     case MSG.RESOLVE:
-      return resolveForPopup(String(msg.text ?? ''), msg.contextHost || null);
+      return resolveForPopup(String(msg.text ?? ''), msg.contextHost || null, Boolean(msg.availableOnly), typeof msg.source === 'string' ? msg.source : 'all');
     case MSG.NAVIGATE: {
       const cache = await getCache();
-      return launch(String(msg.text ?? ''), msg.disposition || 'currentTab', systemByHost(cache.systems, msg.contextHost)?.key ?? null, { confirm: true, force: Boolean(msg.force) });
+      return launch(String(msg.text ?? ''), msg.disposition || 'currentTab', systemByHost(cache.systems, msg.contextHost)?.key ?? null, { confirm: true, force: Boolean(msg.force), contextTabId: Number.isInteger(msg.contextTabId) ? msg.contextTabId : null });
     }
     case MSG.LIVE_CHECK: {
       const cache = await getCache();
@@ -477,11 +741,97 @@ async function handleMessage(msg, sender) {
     case MSG.OPEN_URL: {
       const cache = await getCache();
       const system = systemByHost(cache.systems, msg.host) || { host: '' };
-      if (!/^https:\/\//.test(String(msg.url))) return { error: 'bad url' };
-      await navigate(String(msg.url), system, msg.disposition || 'currentTab', cache.settings);
-      return { action: 'open', url: msg.url };
+      // https always; plain http only to a registered http system (internal on-prem hosts), never javascript:/data:/file:
+      let u = null;
+      try { u = new URL(String(msg.url)); } catch { u = null; }
+      const okScheme = u && (u.protocol === 'https:' || (u.protocol === 'http:' && systemByHost(cache.systems, u.host)?.scheme === 'http'));
+      if (!okScheme) return { error: 'bad url' };
+      await navigate(u.href, system, msg.disposition || 'currentTab', cache.settings, Number.isInteger(msg.contextTabId) ? msg.contextTabId : null);
+      return { action: 'open', url: u.href };
+    }
+    case MSG.OPEN_LAUNCHER:
+      return openLauncher();
+    case MSG.OPEN_SYSTEM_INFO: {
+      const cache = await getCache();
+      const system = systemByHost(cache.systems, msg.host);
+      if (!system) return { error: 'unregistered host' };
+      return openDialog('src/sysinfo/sysinfo.html', system.host, SYSTEM_INFO_WINDOW);
+    }
+    case MSG.OPEN_DEBUG:
+      return openDialog('src/debug/debug.html', msg.host ? String(msg.host) : '', DEBUG_WINDOW);
+    case MSG.DEBUG_CALL: {
+      const cache = await getCache();
+      const system = systemByHost(cache.systems, msg.host);
+      if (!system) return { error: 'unregistered host' };
+      if (!debugCallById(String(msg.call))) return { error: `unknown call ${msg.call}` };
+      return debugCall(system, String(msg.call), msg.params ?? null);
+    }
+    case MSG.PROBE_SYSTEM: {
+      const cache = await getCache();
+      const system = systemByHost(cache.systems, msg.host);
+      if (!system) return { error: 'unregistered host' };
+      return probeSystem(system);
     }
     default:
       return { ignored: true };
   }
+}
+
+// ---------------------------------------------------------------- system-info dialog
+
+/** Opens an extension page in a small popup-type window (no tabs, no address bar); focuses it if already open for that host. */
+async function openDialog(page, host, size) {
+  const url = chrome.runtime.getURL(`${page}${host ? '?host=' + encodeURIComponent(host) : ''}`);
+  try {
+    const open = await chrome.runtime.getContexts({ contextTypes: ['TAB'], documentUrls: [url] });
+    const existing = open.find((c) => c.windowId != null);
+    if (existing) {
+      await chrome.windows.update(existing.windowId, { focused: true });
+      return { windowId: existing.windowId, action: 'focused' };
+    }
+  } catch (e) {
+    log('getContexts unavailable', e);
+  }
+  const win = await chrome.windows.create({ url, type: 'popup', focused: true, ...size });
+  return { windowId: win?.id ?? null, action: 'opened' };
+}
+
+/** Find an open launchpad tab of `system` (active one first) and run one catalogued shell call in it. */
+async function debugCall(system, call, params) {
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: originPattern(system) }); } catch { tabs = []; }
+  if (!tabs.length) return { launchpad: false, reason: 'no tab' };
+  tabs.sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
+  let lastError = 'cannot script the tab';
+  for (const tab of tabs.slice(0, 3)) {
+    try {
+      const [r] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: runDebugCallInPage, args: [call, params] });
+      if (r && r.result && typeof r.result === 'object') return { ...r.result, tabId: tab.id };
+      lastError = 'no result from the page';
+    } catch (e) {
+      lastError = String(e?.message || e);
+    }
+  }
+  return { launchpad: false, reason: lastError };
+}
+
+/**
+ * Read the About-dialog fields from an open launchpad tab of `system` (the same getters a scan records) and store them.
+ * Needs host access, which registered systems have (manifest for *.s4hana.cloud.sap, granted at save time otherwise).
+ */
+async function probeSystem(system) {
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: originPattern(system) }); } catch { tabs = []; }
+  if (!tabs.length) return { launchpad: false, reason: 'no tab' };
+  tabs.sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
+  let reason = 'no shell';
+  for (const tab of tabs.slice(0, 3)) {
+    const r = await probeTab(tab.id);
+    if (!r.launchpad) continue;
+    await storage.setScanSystemInfo(system.host, r.system, r.ui5Version);
+    cachePromise = null;
+    log('probed', system.key, r);
+    return { launchpad: true, system: r.system, ui5Version: r.ui5Version, tabId: tab.id };
+  }
+  return { launchpad: false, reason };
 }

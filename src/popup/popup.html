@@ -7,14 +7,29 @@
 </head>
 <body>
   <header>
-    <div id="current" class="current muted">Checking current tab…</div>
-    <button id="options" class="link" title="Options">⚙</button>
+    <div id="current" class="current muted" title="">Checking current tab…</div>
   </header>
-  <input id="q" type="text" placeholder="[system] alias [value]  —  e.g. acd me23n 4500001234" autocomplete="off" spellcheck="false">
+  <div class="search">
+    <input id="q" type="text" placeholder="[system] alias [value]  —  e.g. acd me23n 4500001234" autocomplete="off" spellcheck="false">
+  </div>
   <div id="hint" class="hint"></div>
   <ul id="list" class="list"></ul>
   <h2 id="recent-title">Recent</h2>
   <ul id="recent" class="list recent"></ul>
+  <footer>
+    <button id="avail" class="toggle" type="button" aria-pressed="false" title="Show only apps the last scan found on the system">available only</button>
+    <span class="selectwrap"><select id="source" class="toggle" title="Where the suggestions come from">
+      <option value="all">source: all</option>
+      <option value="mine">source: my aliases</option>
+      <option value="discovered">source: discovered</option>
+      <option value="seed">source: built-in</option>
+      <option value="library">source: library</option>
+    </select></span>
+    <span class="spacer"></span>
+    <span id="keys" class="keys" aria-hidden="true"></span>
+    <button id="sysinfo" class="link" title="System info: product version, system name, client, roles" aria-label="System info" hidden>ⓘ</button>
+    <button id="options" class="link" title="Options" aria-label="Options">⚙</button>
+  </footer>
   <script type="module" src="popup.js"></script>
 </body>
 </html>

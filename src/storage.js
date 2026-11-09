@@ -1,7 +1,7 @@
 // Typed storage layer. Storage areas are injectable so the pure parts run under `node --test`.
 // Only chromeAreas() touches the chrome.* namespace, and only when called.
 import { aliasesFromCsv, tcodesFromCsv } from './csv.js';
-import { applyTcodeTable } from './tcodes.js';
+import { applyTcodeTable, applyAppMap } from './tcodes.js';
 import { normalizeEntry, DEFAULT_LAUNCHPAD_PATH, EDITIONS } from './resolver.js';
 
 export const SCHEMA_VERSION = 1;
@@ -25,9 +25,98 @@ export const KEYS = Object.freeze({
   LAST_SYSTEM: 'lastUsedSystemKey',
   // session
   PENDING_RESCAN: 'pendingRescan',
+  REOPEN_LAUNCHER: 'reopenLauncher', // session: { host, ts } – reopen the launcher in the tab once that host's scan lands
+  LAUNCHER_NONCE: 'launcherNonce', // session: the nonce the launcher page must present before it renders (see openLauncher)
 });
 
-export const DEFAULT_SETTINGS = Object.freeze({ suggestionLimit: 6, autoScanDays: 7, reuseTabOnSameHost: true });
+export const DEFAULT_SETTINGS = Object.freeze({ suggestionLimit: 6, autoScanDays: 7, reuseTabOnSameHost: true, actionOnlyOnSap: true, copyUnresolved: false, overlayBlur: false });
+
+/** Settings as stored or imported → the known keys only, each coerced and clamped; unknown keys are dropped. */
+export function sanitizeSettings(raw) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const num = (v, lo, hi, dflt) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : dflt);
+  const bool = (v, dflt) => (typeof v === 'boolean' ? v : dflt);
+  return {
+    suggestionLimit: num(r.suggestionLimit, 1, 10, DEFAULT_SETTINGS.suggestionLimit),
+    autoScanDays: num(r.autoScanDays, 0, 365, DEFAULT_SETTINGS.autoScanDays),
+    reuseTabOnSameHost: bool(r.reuseTabOnSameHost, DEFAULT_SETTINGS.reuseTabOnSameHost),
+    actionOnlyOnSap: bool(r.actionOnlyOnSap, DEFAULT_SETTINGS.actionOnlyOnSap),
+    copyUnresolved: bool(r.copyUnresolved, DEFAULT_SETTINGS.copyUnresolved),
+    overlayBlur: bool(r.overlayBlur, DEFAULT_SETTINGS.overlayBlur),
+  };
+}
+
+// ---------------------------------------------------------------- discovery payloads (from the page, or from an import file)
+
+const INTENT_RE = /^[A-Za-z0-9_]+-[A-Za-z0-9_]+$/;
+const MAX_DISCOVERED_ENTRIES = 5000;
+const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null);
+
+/** Entries reported by a scan (or read from a backup): intent-shaped rows only, every field bounded. */
+export function sanitizeDiscoveredEntries(entries) {
+  if (!Array.isArray(entries)) return [];
+  const out = [];
+  for (const e of entries.slice(0, MAX_DISCOVERED_ENTRIES)) {
+    if (!e || typeof e.intent !== 'string') continue;
+    const intent = e.intent.replace(/^#/, '').split('?')[0];
+    if (!INTENT_RE.test(intent)) continue;
+    const [semanticObject, action] = intent.split(/-(.*)/s);
+    out.push({
+      intent,
+      semanticObject,
+      action,
+      title: str(e.title, 200) ?? intent,
+      appId: str(e.appId, 40),
+      paramKey: str(e.paramKey, 80),
+    });
+  }
+  return out;
+}
+
+/**
+ * One system's scan record as stored under discovered[host]: the page (or a backup file) supplies it, so every field
+ * is bounded here. `methods` keeps scalar values under short keys only (what the scan reports: service, links, searchable, cdm).
+ */
+export function sanitizeDiscoveredRecord(rec) {
+  const r = rec && typeof rec === 'object' ? rec : {};
+  const methods = {};
+  if (r.methods && typeof r.methods === 'object') {
+    for (const [k, v] of Object.entries(r.methods).slice(0, 20)) {
+      if (k.length > 40) continue;
+      if (typeof v === 'string') methods[k] = v.slice(0, 200);
+      else if (typeof v === 'number' || typeof v === 'boolean') methods[k] = v;
+    }
+  }
+  return {
+    scannedAt: str(r.scannedAt, 40) ?? new Date().toISOString(),
+    ui5Version: str(r.ui5Version, 40),
+    system: sanitizeSystemInfo(r.system),
+    methods,
+    errors: Array.isArray(r.errors) ? r.errors.slice(0, 20).map((x) => String(x).slice(0, 300)) : [],
+    entries: sanitizeDiscoveredEntries(r.entries),
+  };
+}
+
+/** scanMeta[host] as the options page and the resolver read it. */
+export function sanitizeScanMeta(meta) {
+  const m = meta && typeof meta === 'object' ? meta : {};
+  const info = sanitizeSystemInfo(m.system);
+  return {
+    lastScanned: str(m.lastScanned, 40),
+    appCount: Number.isFinite(Number(m.appCount)) ? Math.max(0, Math.round(Number(m.appCount))) : 0,
+    system: info,
+    detectedEdition: EDITIONS.includes(m.detectedEdition) ? m.detectedEdition : editionFromSystemInfo(info),
+    ...(str(m.ui5Version, 40) ? { ui5Version: str(m.ui5Version, 40) } : {}),
+  };
+}
+
+/** A map keyed by host (discovered, scanMeta): valid host keys only, each value through `each`. */
+const sanitizeHostMap = (map, each) => {
+  const out = {};
+  if (!map || typeof map !== 'object') return out;
+  for (const [host, v] of Object.entries(map)) if (HOST_RE.test(host) && v && typeof v === 'object') out[host] = each(v);
+  return out;
+};
 export const ENVS = Object.freeze(['DEV', 'TST', 'PRD']);
 export { EDITIONS };
 export const EDITION_LABELS = Object.freeze({ public: 'Public Cloud', private: 'Private Cloud', onprem: 'On-Premise' });
@@ -36,20 +125,52 @@ export function guessEdition(host) {
   const h = String(host || '').toLowerCase().replace(/:\d+$/, '');
   return /\.s4hana\.cloud\.sap$|\.s4hana\.ondemand\.com$/.test(h) ? 'public' : 'onprem';
 }
-export const SYSTEM_INFO_FIELDS = Object.freeze(['productName', 'productVersion', 'systemName', 'systemRole', 'tenantRole', 'client']);
+/** System tab of the launchpad's About dialog (sap.ushell.Container.getLogonSystem()). */
+export const LOGON_INFO_FIELDS = Object.freeze(['productName', 'productVersion', 'productVersions', 'systemName', 'systemRole', 'tenantRole', 'client', 'clientRole']);
+/** Fields that may legitimately be long (the installed-products list); everything else is capped at 120 characters. */
+const LONG_INFO_FIELDS = new Set(['productVersions']);
+/** Application tab (AppLifeCycle.getCurrentApplication().getInfo()): the running app's version carries the S/4HANA stack version, e.g. 2025.0.23. */
+export const APP_INFO_FIELDS = Object.freeze(['appVersion', 'appTitle', 'appId', 'transaction', 'appIntent', 'appSupportInfo', 'technicalAppComponentId', 'appFrameworkId', 'appFrameworkVersion', 'contentProviderLabel']);
+export const SYSTEM_INFO_FIELDS = Object.freeze([...LOGON_INFO_FIELDS, ...APP_INFO_FIELDS]);
 /** The fields the launchpad's About dialog shows, as reported by discovery; strings only, bounded. */
 export function sanitizeSystemInfo(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const out = {};
-  for (const k of SYSTEM_INFO_FIELDS) if (typeof raw[k] === 'string' && raw[k].trim()) out[k] = raw[k].trim().slice(0, 120);
+  for (const k of SYSTEM_INFO_FIELDS) {
+    const v = typeof raw[k] === 'number' ? String(raw[k]) : raw[k];
+    if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, LONG_INFO_FIELDS.has(k) ? 600 : 120);
+  }
+  // On-premise systems answer getProductVersion() with every installed product, one per line ("SAP SCREEN PERSONAS 3.0\r\nSAP S/4HANA 2025\r\n…").
+  // Keep the product line as productVersion and the whole list as productVersions.
+  const lines = splitProductLines(raw.productVersion);
+  if (lines.length > 1) {
+    out.productVersion = pickProductLine(lines);
+    if (!out.productVersions) out.productVersions = lines.join(' · ').slice(0, 600);
+  }
   return Object.keys(out).length ? out : null;
 }
-/** One line like the About dialog's "Product version", e.g. "SAP S/4HANA Cloud 2508". */
+
+export const splitProductLines = (text) => String(text ?? '').split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean);
+
+/** The line that names the product itself: "SAP S/4HANA 2025" before "SAP FIORI FOR SAP S/4HANA 2025" or "SAP S/4HANA FOUNDATION 2025". */
+export function pickProductLine(lines) {
+  const list = Array.isArray(lines) ? lines : splitProductLines(lines);
+  if (!list.length) return '';
+  const s4 = (l) => /S\/?4\s?HANA/i.test(l);
+  const secondary = (l) => /\b(FOUNDATION|FIORI|FES|FRONT-?END|UI FOR|ANALYTICS|PERSONAS|SMART BUSINESS|PLATFORM)\b/i.test(l);
+  return list.find((l) => s4(l) && !secondary(l) && /^SAP S\/?4\s?HANA\b/i.test(l))
+    ?? list.find((l) => s4(l) && !secondary(l))
+    ?? list.find((l) => s4(l))
+    ?? list[0];
+}
+/** One line like the About dialog's "Product version" plus the Application tab's version: "SAP S/4HANA 2025 · 2025.0.23". */
 export function describeSystemInfo(info) {
   if (!info) return '';
   const v = info.productVersion || '';
   const n = info.productName || '';
-  return v.toLowerCase().includes(n.toLowerCase()) ? v : [n, v].filter(Boolean).join(' ');
+  const product = v.toLowerCase().includes(n.toLowerCase()) ? v : [n, v].filter(Boolean).join(' ');
+  const app = info.appVersion && !product.includes(info.appVersion) ? info.appVersion : '';
+  return [product, app].filter(Boolean).join(' · ');
 }
 /**
  * Edition from the About dialog's product name/version. Conservative: Public Cloud needs "cloud" plus either "public"
@@ -66,7 +187,7 @@ export function editionFromSystemInfo(info) {
   return null;
 }
 export const HOST_RE = /^[a-z0-9.-]+(:\d{1,5})?$/;
-export const KEY_RE = /^[a-z0-9][a-z0-9_-]*$/;
+export const KEY_RE = /^[a-z0-9][a-z0-9_-]*$/i; // the key keeps the case it was typed in; matching is case-insensitive
 export const ALIAS_RE = /^[a-z0-9][a-z0-9_./-]*$/;
 export const DEFAULT_HOST_SUFFIX = '.s4hana.cloud.sap';
 /** Hosts covered by the static manifest permissions; anything else needs a runtime grant + dynamic content scripts. */
@@ -178,14 +299,27 @@ export async function writeChunked(area, key, items, maxBytes = SYNC_ITEM_BUDGET
 export function normalizeSystem(raw) {
   const r = raw || {};
   const env = String(r.env || 'TST').toUpperCase();
+  const scheme = String(r.scheme || '').toLowerCase() === 'http' ? 'http' : 'https';
+  // URL.host (tabs, content scripts) omits the default port, so the stored host must too or lookups never match.
+  const host = String(r.host ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[/?#].*$/, '').replace(scheme === 'http' ? /:80$/ : /:443$/, '');
+  // A pasted "…/flp?sap-client=600#Shell-home" in the card editor must not leave "#Shell-home" in the path or query:
+  // the generated URL would then carry two hashes and the shell rejects "Shell-home#Shell-startGUI?…" as unparsable.
+  let launchpadPath = String(r.launchpadPath || '').trim().replace(/#.*$/, '');
+  let launchpadQuery = String(r.launchpadQuery ?? '').trim().replace(/#.*$/, '').replace(/^\?/, '');
+  const qInPath = launchpadPath.indexOf('?');
+  if (qInPath >= 0) {
+    const fromPath = launchpadPath.slice(qInPath + 1);
+    launchpadPath = launchpadPath.slice(0, qInPath);
+    launchpadQuery = [fromPath, launchpadQuery].filter(Boolean).join('&');
+  }
   return {
-    key: String(r.key ?? '').trim().toLowerCase(),
+    key: String(r.key ?? '').trim(),
     name: String(r.name ?? '').trim(),
     customer: String(r.customer ?? '').trim(),
-    host: String(r.host ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[/?#].*$/, ''),
-    scheme: String(r.scheme || '').toLowerCase() === 'http' ? 'http' : 'https',
-    launchpadPath: String(r.launchpadPath || DEFAULT_LAUNCHPAD_PATH).trim() || DEFAULT_LAUNCHPAD_PATH,
-    launchpadQuery: String(r.launchpadQuery ?? '').trim().replace(/^\?/, ''),
+    host,
+    scheme,
+    launchpadPath: launchpadPath || DEFAULT_LAUNCHPAD_PATH,
+    launchpadQuery,
     env: ENVS.includes(env) ? env : 'TST',
     edition: EDITIONS.includes(String(r.edition || '').toLowerCase()) ? String(r.edition).toLowerCase() : guessEdition(r.host),
     isDefault: Boolean(r.isDefault),
@@ -200,8 +334,8 @@ export function validateSystems(systems) {
   (systems || []).forEach((s, i) => {
     const row = `row ${i + 1}`;
     if (!KEY_RE.test(s.key)) errors.push(`${row}: key must match ${KEY_RE}`);
-    if (keys.has(s.key)) errors.push(`${row}: duplicate key "${s.key}"`);
-    keys.add(s.key);
+    if (keys.has(s.key.toLowerCase())) errors.push(`${row}: duplicate key "${s.key}"`);
+    keys.add(s.key.toLowerCase());
     if (!HOST_RE.test(s.host)) errors.push(`${row}: host must match ${HOST_RE}`);
     if (!s.launchpadPath.startsWith('/')) errors.push(`${row}: launchpadPath must start with /`);
     if (s.isDefault) defaults++;
@@ -222,25 +356,36 @@ export function migrateSnapshot(snapshot) {
   }
   if (Array.isArray(sync[KEYS.USER_ALIASES])) sync[KEYS.USER_ALIASES] = sync[KEYS.USER_ALIASES].map((a) => normalizeEntry({ ...a, source: 'user' }));
   sync[KEYS.HIDDEN] = Array.isArray(sync[KEYS.HIDDEN]) ? sync[KEYS.HIDDEN] : [];
-  sync[KEYS.SETTINGS] = { ...DEFAULT_SETTINGS, ...(sync[KEYS.SETTINGS] || {}) };
+  sync[KEYS.SETTINGS] = sanitizeSettings(sync[KEYS.SETTINGS]);
   sync[KEYS.SCHEMA] = SCHEMA_VERSION;
-  local[KEYS.DISCOVERED] = local[KEYS.DISCOVERED] && typeof local[KEYS.DISCOVERED] === 'object' ? local[KEYS.DISCOVERED] : {};
-  local[KEYS.SCAN_META] = local[KEYS.SCAN_META] && typeof local[KEYS.SCAN_META] === 'object' ? local[KEYS.SCAN_META] : {};
+  local[KEYS.DISCOVERED] = sanitizeHostMap(local[KEYS.DISCOVERED], sanitizeDiscoveredRecord);
+  local[KEYS.SCAN_META] = sanitizeHostMap(local[KEYS.SCAN_META], sanitizeScanMeta);
   local[KEYS.RECENT] = Array.isArray(local[KEYS.RECENT]) ? local[KEYS.RECENT].slice(0, RECENT_LIMIT) : [];
   local[KEYS.SCHEMA] = SCHEMA_VERSION;
   return { sync, local };
 }
 
 /** Build the seed alias list from the bundled CSV texts. */
-export function buildSeedEntries({ aliasesCsv = '', libraryCsv = '', tcodesCsv = '' } = {}) {
+export function buildSeedEntries({ aliasesCsv = '', libraryCsv = '', tcodesCsv = '', tcodeAppsJson = '' } = {}) {
   const errors = [];
   const empty = { entries: [], rows: [], errors: [] };
   const a = aliasesCsv.trim() ? aliasesFromCsv(aliasesCsv, { source: 'seed' }) : empty;
   const l = libraryCsv.trim() ? aliasesFromCsv(libraryCsv, { source: 'library' }) : empty;
   const t = tcodesCsv.trim() ? tcodesFromCsv(tcodesCsv) : empty;
   errors.push(...a.errors.map((e) => ({ file: 'aliases.csv', ...e })), ...l.errors.map((e) => ({ file: 'library.csv', ...e })), ...t.errors.map((e) => ({ file: 'tcodes.csv', ...e })));
-  const entries = applyTcodeTable([...a.entries, ...l.entries].map(normalizeEntry), t.rows).map(normalizeEntry);
-  return { entries, errors };
+  let appRows = [];
+  if (String(tcodeAppsJson).trim()) {
+    try {
+      const parsed = JSON.parse(tcodeAppsJson);
+      appRows = Array.isArray(parsed) ? parsed.filter((r) => r && typeof r === 'object' && r.tcode) : [];
+    } catch (e) {
+      errors.push({ file: 'tcode-apps.json', line: 0, message: `invalid JSON: ${e.message}` });
+    }
+  }
+  const tabled = applyTcodeTable([...a.entries, ...l.entries].map(normalizeEntry), t.rows);
+  const { entries: mapped, unmapped } = applyAppMap(tabled, appRows);
+  for (const u of unmapped) errors.push({ file: 'tcode-apps.json', line: 0, message: `${u.tcode}: no library app for ${u.appId || 'no app ID'} / "${u.app}"`, info: true });
+  return { entries: mapped.map(normalizeEntry), errors };
 }
 
 // ---------------------------------------------------------------- areas
@@ -305,8 +450,19 @@ export function createStorage(areas = null) {
       const meta = await one(local, KEYS.SCAN_META, {});
       // Edition comes from the About-dialog product version, never from the intents (Shell-startGUI exists on Public Cloud too).
       const info = sanitizeSystemInfo(record.system);
-      meta[host] = { lastScanned: record.scannedAt, appCount: (record.entries || []).length, system: info, detectedEdition: editionFromSystemInfo(info) };
+      meta[host] = { lastScanned: record.scannedAt, appCount: (record.entries || []).length, system: info, detectedEdition: editionFromSystemInfo(info), ...(record.ui5Version ? { ui5Version: record.ui5Version } : {}) };
       await local.set({ [KEYS.DISCOVERED]: all, [KEYS.SCAN_META]: meta });
+    },
+    /** Record About-dialog fields read live from a tab, without touching the discovered apps or the scan date. */
+    async setScanSystemInfo(host, rawInfo, ui5Version = null) {
+      const info = sanitizeSystemInfo(rawInfo);
+      const meta = await one(local, KEYS.SCAN_META, {});
+      const prev = meta[host] || { lastScanned: null, appCount: 0 };
+      meta[host] = { ...prev, system: info, detectedEdition: editionFromSystemInfo(info), ...(ui5Version ? { ui5Version } : {}) };
+      const all = await one(local, KEYS.DISCOVERED, {});
+      if (all[host]) all[host] = { ...all[host], system: info, ...(ui5Version ? { ui5Version } : {}) };
+      await local.set({ [KEYS.SCAN_META]: meta, ...(all[host] ? { [KEYS.DISCOVERED]: all } : {}) });
+      return meta[host];
     },
     async clearDiscovered(host) {
       const all = await one(local, KEYS.DISCOVERED, {});
@@ -327,6 +483,10 @@ export function createStorage(areas = null) {
     async getSettings() { return { ...DEFAULT_SETTINGS, ...(await one(sync, KEYS.SETTINGS, {})) }; },
     async setSettings(patch) { const next = { ...(await api.getSettings()), ...(patch || {}) }; await sync.set({ [KEYS.SETTINGS]: next }); return next; },
     async getPendingRescan(host) { return Boolean((await one(session, KEYS.PENDING_RESCAN, {}))[host]); },
+    async getReopenLauncher() { return (await one(session, KEYS.REOPEN_LAUNCHER, null)) || null; },
+    async setReopenLauncher(host) { await session.set({ [KEYS.REOPEN_LAUNCHER]: host ? { host, ts: Date.now() } : null }); },
+    async getLauncherNonce() { return (await one(session, KEYS.LAUNCHER_NONCE, null)) || null; },
+    async setLauncherNonce(nonce) { await session.set({ [KEYS.LAUNCHER_NONCE]: nonce || null }); },
     async setPendingRescan(host, flag) {
       const all = await one(session, KEYS.PENDING_RESCAN, {});
       if (flag) all[host] = true; else delete all[host];
@@ -359,9 +519,9 @@ export function createStorage(areas = null) {
     },
 
     /** Loads the bundled seed when the bundled version differs from the stored one (or when forced). */
-    async applySeed({ aliasesCsv, libraryCsv, tcodesCsv, version, force = false }) {
+    async applySeed({ aliasesCsv, libraryCsv, tcodesCsv, tcodeAppsJson, version, force = false }) {
       if (!force && (await api.getSeedVersion()) === version) return { applied: false, count: (await api.getSeedAliases()).length, errors: [] };
-      const { entries, errors } = buildSeedEntries({ aliasesCsv, libraryCsv, tcodesCsv });
+      const { entries, errors } = buildSeedEntries({ aliasesCsv, libraryCsv, tcodesCsv, tcodeAppsJson });
       await api.setSeedAliases(entries, version);
       return { applied: true, count: entries.length, errors };
     },

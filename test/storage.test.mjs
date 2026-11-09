@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
-  systemFromUrl, parseLaunchpadUrl, isDefaultHost, guessEdition, looksLikeLaunchpad, editionFromSystemInfo, sanitizeSystemInfo, describeSystemInfo,
+  systemFromUrl, parseLaunchpadUrl, isDefaultHost, guessEdition, looksLikeLaunchpad, editionFromSystemInfo, sanitizeSystemInfo, describeSystemInfo, pickProductLine, splitProductLines,
   chunkArray, byteSize, readChunked, writeChunked, migrateSnapshot, memoryArea, createStorage, buildSeedEntries, validateSystems, normalizeSystem, SCHEMA_VERSION, KEYS,
+  sanitizeSettings, sanitizeDiscoveredRecord, DEFAULT_SETTINGS,
 } from '../src/storage.js';
 
 const mk = () => createStorage({ sync: memoryArea(), local: memoryArea(), session: memoryArea() });
@@ -38,7 +40,7 @@ test('migrateSnapshot v0 → v1', () => {
     local: {},
   });
   assert.equal(out.sync.schemaVersion, SCHEMA_VERSION);
-  assert.equal(out.sync.systems[0].key, 'acd');
+  assert.equal(out.sync.systems[0].key, 'ACD'); // keys keep their case
   assert.equal(out.sync.systems[0].host, 'my1.s4hana.cloud.sap');
   assert.equal(out.sync.systems[0].launchpadPath, '/ui');
   assert.equal(out.sync.systems[0].env, 'DEV');
@@ -78,7 +80,14 @@ test('createStorage: typed api, migrate, export/import round-trip', async () => 
   await s.setDiscovered('op.example', { scannedAt: '2026-01-01T00:00:00Z', entries: [{ intent: 'Shell-startGUI', title: 'gui' }], system: { productName: 'SAP S/4HANA', productVersion: 'SAP S/4HANA 2023 FPS02', systemRole: 'Development System', junk: 'x' } });
   assert.deepEqual((await s.getScanMeta())['op.example'].system, { productName: 'SAP S/4HANA', productVersion: 'SAP S/4HANA 2023 FPS02', systemRole: 'Development System' });
   assert.equal((await s.getScanMeta())['op.example'].detectedEdition, 'onprem');
-  await assert.rejects(() => s.setSystems([{ key: 'x', host: 'bad host' }]));
+  // live About fields: stored without a scan date on an unscanned host; merged into an existing scan without touching its apps
+  assert.deepEqual(await s.setScanSystemInfo('fresh.example', { productVersion: 'SAP S/4HANA CLOUD 2508', nope: 1 }, '1.130.0'), { lastScanned: null, appCount: 0, system: { productVersion: 'SAP S/4HANA CLOUD 2508' }, detectedEdition: 'public', ui5Version: '1.130.0' });
+  await s.setScanSystemInfo('op.example', { productVersion: 'SAP S/4HANA Cloud Private Edition 2023' });
+  assert.deepEqual((await s.getScanMeta())['op.example'], { lastScanned: '2026-01-01T00:00:00Z', appCount: 1, system: { productVersion: 'SAP S/4HANA Cloud Private Edition 2023' }, detectedEdition: 'private' });
+  assert.equal((await s.getDiscovered('op.example')).entries.length, 1);
+  assert.equal((await s.getDiscovered('op.example')).system.productVersion, 'SAP S/4HANA Cloud Private Edition 2023');
+  assert.equal(await s.getDiscovered('fresh.example'), null, 'no discovered record is invented');
+  assert.deepEqual((await s.setScanSystemInfo('op.example', null)).system, null);
 
   const exported = await s.exportJson();
   const t = mk();
@@ -172,8 +181,103 @@ test('editionFromSystemInfo classifies About-dialog product strings conservative
   assert.equal(editionFromSystemInfo({ productVersion: 'SAP S/4HANA Cloud' }), null, 'cloud without a release or "public" is not enough');
   assert.equal(editionFromSystemInfo({ productVersion: 'S4CORE 109' }), null);
   assert.equal(editionFromSystemInfo(null), null);
-  assert.equal(sanitizeSystemInfo({ productVersion: '  x  ', client: 100, nope: 'y' })?.productVersion, 'x');
+  assert.deepEqual(sanitizeSystemInfo({ productVersion: '  x  ', client: 100, nope: 'y', appVersion: '2025.0.23', systemRole: { v: 1 } }), { productVersion: 'x', client: '100', appVersion: '2025.0.23' }, 'numbers are kept as strings, objects dropped');
+  assert.equal(sanitizeSystemInfo({ appVersion: 'v'.repeat(500) }).appVersion.length, 120);
   assert.equal(sanitizeSystemInfo({}), null);
   assert.equal(describeSystemInfo({ productName: 'SAP S/4HANA Cloud', productVersion: 'SAP S/4HANA CLOUD 2508' }), 'SAP S/4HANA CLOUD 2508');
   assert.equal(describeSystemInfo({ productName: 'SAP S/4HANA', productVersion: '2023' }), 'SAP S/4HANA 2023');
+  assert.equal(describeSystemInfo({ productName: 'SAP S/4HANA', productVersion: 'SAP S/4HANA 2025', appVersion: '2025.0.23' }), 'SAP S/4HANA 2025 · 2025.0.23');
+  assert.equal(describeSystemInfo({ appVersion: '2025.0.23' }), '2025.0.23', 'the Application version alone still describes the system');
+  assert.equal(describeSystemInfo({ productVersion: 'SAP S/4HANA 2025.0.23', appVersion: '2025.0.23' }), 'SAP S/4HANA 2025.0.23', 'not repeated when the product line already contains it');
+  assert.equal(editionFromSystemInfo({ appVersion: '2025.0.23' }), null, 'the application version never decides the edition');
+});
+
+test('on-premise getProductVersion() lists every installed product: the S/4HANA line is the product version', () => {
+  // verbatim from an S/4HANA 2025 on-premise system (getProductName() is undefined there, getSystemRole() is the number 1)
+  const raw = { productVersion: 'SAP SCREEN PERSONAS 3.0\r\nSAP SMART BUSINESS FOR FND 1.0\r\nSAP SMART BUSINESS FOR ERP 1.0\r\nSAP ANALYTICS FOUNDATION 1.0\r\nSAP S/4HANA 2025\r\nABAP PLATFORM 2025\r\nSAP S/4HANA FOUNDATION 2025\r\nSAP FIORI FOR SAP S/4HANA 2025\r\nSAP FIORI FES 2025 FOR S/4HANA', client: '600', clientRole: 'D', systemRole: 1, tenantRole: 'tenant role', getName: 'ACD' };
+  const info = sanitizeSystemInfo(raw);
+  assert.equal(info.productVersion, 'SAP S/4HANA 2025');
+  assert.equal(info.productVersions, 'SAP SCREEN PERSONAS 3.0 · SAP SMART BUSINESS FOR FND 1.0 · SAP SMART BUSINESS FOR ERP 1.0 · SAP ANALYTICS FOUNDATION 1.0 · SAP S/4HANA 2025 · ABAP PLATFORM 2025 · SAP S/4HANA FOUNDATION 2025 · SAP FIORI FOR SAP S/4HANA 2025 · SAP FIORI FES 2025 FOR S/4HANA');
+  assert.equal(info.clientRole, 'D');
+  assert.equal(info.systemRole, '1');
+  assert.equal(info.getName, undefined);
+  assert.equal(editionFromSystemInfo(info), 'onprem', 'the 120-character cap used to cut the list before the S/4HANA line and left the edition undecided');
+  assert.equal(describeSystemInfo({ ...info, appVersion: '2025.0.23' }), 'SAP S/4HANA 2025 · 2025.0.23');
+  assert.equal(sanitizeSystemInfo({ productVersion: 'SAP S/4HANA CLOUD 2508' }).productVersions, undefined, 'a single line stays as it is');
+  assert.equal(sanitizeSystemInfo({ productVersion: 'A\nB', productVersions: 'already provided' }).productVersions, 'already provided');
+  assert.equal(sanitizeSystemInfo({ productVersions: 'x'.repeat(1000) }).productVersions.length, 600);
+  assert.deepEqual(splitProductLines(' A \r\n\nB\n'), ['A', 'B']);
+  assert.equal(pickProductLine(['SAP FIORI FOR SAP S/4HANA 2025', 'SAP S/4HANA FOUNDATION 2025', 'SAP S/4HANA 2025']), 'SAP S/4HANA 2025');
+  assert.equal(pickProductLine(['ABAP PLATFORM 2025', 'SAP FIORI FOR SAP S/4HANA 2025']), 'SAP FIORI FOR SAP S/4HANA 2025', 'a secondary S/4HANA line beats a non-S/4HANA line');
+  assert.equal(pickProductLine(['SAP S/4HANA CLOUD PRIVATE EDITION 2023', 'SAP FIORI FES 2023']), 'SAP S/4HANA CLOUD PRIVATE EDITION 2023');
+  assert.equal(pickProductLine(['ABAP PLATFORM 2025', 'SAP BW/4HANA 2023']), 'ABAP PLATFORM 2025', 'no S/4HANA line: the first line');
+  assert.equal(pickProductLine([]), '');
+  assert.equal(pickProductLine('SAP S/4HANA 2023 FPS01'), 'SAP S/4HANA 2023 FPS01');
+});
+
+test('normalizeSystem: a hash or query pasted into the path/query fields never reaches the generated URL', () => {
+  const s = normalizeSystem({ key: 'acd', host: 'acd.finteq.io:8443', launchpadPath: '/sap/bc/ui2/flp#Shell-home', launchpadQuery: 'sap-client=600#Shell-home' });
+  assert.equal(s.launchpadPath, '/sap/bc/ui2/flp');
+  assert.equal(s.launchpadQuery, 'sap-client=600');
+  const t = normalizeSystem({ key: 'acd', host: 'acd.finteq.io:8443', launchpadPath: '/sap/bc/ui2/flp?sap-client=600#Shell-home', launchpadQuery: '?sap-language=EN' });
+  assert.equal(t.launchpadPath, '/sap/bc/ui2/flp');
+  assert.equal(t.launchpadQuery, 'sap-client=600&sap-language=EN');
+  assert.equal(normalizeSystem({ key: 'x', host: 'h', launchpadPath: '#Shell-home' }).launchpadPath, '/ui', 'a hash alone falls back to the default path');
+});
+
+test('buildSeedEntries: the t-code → app table attaches codes to library apps, and reports the rest as info', () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
+  const { entries, errors } = buildSeedEntries({ libraryCsv: read('../src/seed/library.csv'), tcodesCsv: read('../src/seed/tcodes.csv'), tcodeAppsJson: read('../src/seed/tcode-apps.json') });
+  const has = (code) => entries.filter((e) => e.tcodes.includes(code));
+  assert.deepEqual(has('ksu5').map((e) => e.appId), ['F3337'], 'KSU5 → Run Allocations by app ID');
+  assert.deepEqual([...new Set(has('st22').map((e) => e.intent))], ['ABAPSystem-displayRuntimeErrors'], 'ST22 → ABAP Runtime Errors (F7770)');
+  assert.deepEqual([...new Set(has('sm37').map((e) => `${e.intent}/${e.confidence}`))], ['ApplicationJob-show/high'], 'SM37 → Application Jobs F1240 by its real intent');
+  assert.deepEqual([...new Set(has('sm36').map((e) => e.appId))], ['F1240']);
+  assert.deepEqual([...new Set([...has('sm19'), ...has('sm20')].map((e) => `${e.intent}/${e.appId}`))], ['SecurityAuditLog-displayV2/F4204A'], 'SM19 and SM20 → Display Security Audit Log');
+  assert.deepEqual([...new Set(has('sm59').map((e) => e.appId))], ['F1762'], 'SM59 → Communication Systems, no longer Carry Forward Balances');
+  assert.deepEqual([...new Set(has('soamanager').map((e) => e.appId))], ['F1763']);
+  assert.deepEqual(has('gcts').map((e) => `${e.alias}/${e.intent}`), ['f4158/GCTSRepository-manage'], 'gcts → Git-enabled CTS F4158, the primary entry only');
+  assert.deepEqual(has('sm12').map((e) => e.appId).sort(), ['F5708', 'F6049'], 'SM12 → user sessions (all, own); SMENQ likewise');
+  assert.deepEqual(has('smenq').map((e) => e.appId).sort(), ['F5708', 'F6049']);
+  assert.deepEqual([...new Set(has('sm13').map((e) => e.intent))].sort(), ['AIFMessage-manage', 'ApplicationLog-showList'], 'SM13 → application logs and the AIF message dashboard');
+  assert.deepEqual([...new Set(has('sm21').map((e) => e.appId))].sort(), ['F1487', 'F4106'], 'SM21 → application logs and the authorization trace');
+  assert.deepEqual([...new Set(has('slg1').map((e) => e.appId))], ['F1487'], 'SLG1 → Application Logs is F1487, the library row, not a standalone seed');
+  assert.ok(['su53', 'st01', 'stauthtrace'].every((c) => has(c).some((e) => e.appId === 'F4106')), 'SU53, ST01 and STAUTHTRACE → Display Authorization Trace');
+  assert.deepEqual(has('fb03').filter((e) => e.appId === 'F0717').map((e) => e.alias), ['f0717', 'f0717-3'], 'the primary entry of the nine-intent app from the app table, plus the AccountingDocument-manage row tcodes.csv names');
+  assert.ok(has('mb22').length >= 1 && has('mb22').every((e) => /^Manage Reservations$/i.test(e.title)), 'no app ID: matched by title');
+  assert.ok(has('me23n').some((e) => e.appId === 'F0842A'), 'a code already in tcodes.csv is also attached to the mapped app');
+  assert.ok(errors.every((e) => e.info), 'only informational messages');
+  assert.ok(errors.some((e) => /snote/i.test(e.message)), 'SNOTE has no app');
+  assert.ok(errors.length < 60, `unmapped codes: ${errors.length}`);
+  assert.deepEqual(buildSeedEntries({ tcodeAppsJson: '[not json' }).errors.map((e) => e.file), ['tcode-apps.json']);
+});
+
+test('system keys keep their case; lookups, duplicates and typing ignore it', async () => {
+  const s = normalizeSystem({ key: 'MyDev', host: 'my1.s4hana.cloud.sap', isDefault: true });
+  assert.equal(s.key, 'MyDev');
+  assert.deepEqual(validateSystems([s]), []);
+  assert.ok(validateSystems([s, normalizeSystem({ key: 'mydev', host: 'my2.s4hana.cloud.sap' })]).some((e) => /duplicate key/.test(e)), 'the same key in another case is a duplicate');
+});
+
+test('import hardening: settings, discovered records and scan metadata from a backup file are bounded and typed', async () => {
+  assert.deepEqual(sanitizeSettings({ suggestionLimit: 999, autoScanDays: -3, reuseTabOnSameHost: 'yes', copyUnresolved: true, bogus: 1 }), { ...DEFAULT_SETTINGS, suggestionLimit: 10, autoScanDays: 0, copyUnresolved: true }, 'clamped, coerced, unknown keys dropped');
+  assert.deepEqual(sanitizeSettings(null), { ...DEFAULT_SETTINGS });
+  const rec = sanitizeDiscoveredRecord({ scannedAt: 'x'.repeat(100), ui5Version: '1.' + '2'.repeat(100), methods: { links: 'L'.repeat(500), nested: { deep: 1 }, n: 3, ['k'.repeat(50)]: 'v' }, errors: Array.from({ length: 40 }, () => 'e'.repeat(1000)), entries: 'not an array', system: { productVersion: 'SAP S/4HANA 2025', secret: 'x' } });
+  assert.equal(rec.scannedAt.length, 40);
+  assert.equal(rec.ui5Version.length, 40);
+  assert.deepEqual(rec.methods, { links: 'L'.repeat(200), n: 3 }, 'scalar method fields only, bounded');
+  assert.equal(rec.errors.length, 20);
+  assert.equal(rec.errors[0].length, 300);
+  assert.deepEqual(rec.entries, []);
+  assert.equal(rec.system.productVersion, 'SAP S/4HANA 2025');
+  assert.ok(!('secret' in rec.system));
+  // a malformed backup: discovered[host].entries as a string, scanMeta with junk, an invalid host key
+  const m = migrateSnapshot({ sync: {}, local: { discovered: { 'my1.s4hana.cloud.sap': { entries: 'x' }, 'not a host!': { entries: [] } }, scanMeta: { 'my1.s4hana.cloud.sap': { appCount: 'many', detectedEdition: 'mars', system: 'junk' } } } });
+  assert.deepEqual(Object.keys(m.local.discovered), ['my1.s4hana.cloud.sap']);
+  assert.deepEqual(m.local.discovered['my1.s4hana.cloud.sap'].entries, [], 'the resolver can iterate it');
+  assert.deepEqual(m.local.scanMeta['my1.s4hana.cloud.sap'], { lastScanned: null, appCount: 0, system: null, detectedEdition: null });
+  const st = mk();
+  await st.importJson({ format: 'slashn-config', systems: [{ key: 'acd', host: 'my1.s4hana.cloud.sap', isDefault: true }], settings: { suggestionLimit: '7', weird: true }, discovered: { 'my1.s4hana.cloud.sap': { entries: [{ intent: 'PurchaseOrder-manage', title: 'Manage POs' }, { intent: 'bad intent' }] } } });
+  assert.deepEqual(await st.getSettings(), { ...DEFAULT_SETTINGS, suggestionLimit: 7 });
+  assert.equal((await st.getDiscovered())['my1.s4hana.cloud.sap'].entries.length, 1);
 });

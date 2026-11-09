@@ -1,21 +1,81 @@
-:root { --bg: #fff; --fg: #1d2d3e; --muted: #667a8e; --line: #d9dee5; --accent: #0070f2; --chip: #eef2f6; --sel: #e8f1fd; }
+:root { --bg: #fff; --fg: #1d2d3e; --muted: #667a8e; --line: #d9dee5; --accent: #0070f2; --chip: #eef2f6; --sel: #e8f1fd; color-scheme: light dark; }
+/* color-scheme matters when this page is framed by the overlay: Chrome paints an iframe over an opaque backdrop when its
+   scheme differs from the host page's, so declaring both keeps the frame transparent whatever the page or OS uses */
 @media (prefers-color-scheme: dark) {
   :root { --bg: #12171d; --fg: #e6ebf0; --muted: #9fb0c0; --line: #2c3540; --accent: #4aa3ff; --chip: #1f2831; --sel: #1b2a3d; }
 }
 * { box-sizing: border-box; }
-body { width: 420px; margin: 0; padding: 10px 12px 12px; font: 13px/1.4 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--fg); background: var(--bg); }
-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.current { font-size: 12px; }
-.current .env { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px; font-weight: 600; margin-left: 4px; }
+body { width: 520px; margin: 0; padding: 10px 12px 12px; font: 13px/1.4 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--fg); background: var(--bg); }
+header { display: flex; align-items: center; justify-content: center; text-align: center; margin: 2px 0 10px; }
+.current { font-size: 16px; }
+.current .sysname { font-weight: 600; }
+.current .syshost { color: var(--muted); font-size: 12px; margin-top: 1px; }
+.current .syshost.inline { font-weight: 400; margin-left: 6px; }
+.hintpair { display: inline-flex; align-items: center; gap: 4px; }
+.current .env { display: inline-block; padding: 0 7px; border-radius: 9px; font-size: 12px; font-weight: 600; margin-left: 6px; vertical-align: 2px; }
+/* environment tier colour: the pill, and the search box's focus ring */
+body[data-env="DEV"] { --tier: #2e7d32; }
+body[data-env="TST"] { --tier: #b26a00; }
+body[data-env="PRD"] { --tier: #c62828; }
+@media (prefers-color-scheme: dark) {
+  .chip.guess, .chip.missing { background: #46201f; color: #f28b82; }
+  .chip.live { background: #2e7d32; }
+  body[data-env="DEV"] { --tier: #5cb860; }
+  body[data-env="TST"] { --tier: #e0a030; }
+  body[data-env="PRD"] { --tier: #ef5350; }
+  .env.DEV { background: #1f3a24; color: #8fd694; } .env.TST { background: #3d2f10; color: #f0c060; } .env.PRD { background: #46201f; color: #f28b82; }
+}
+footer { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--line); }
+select.toggle { appearance: none; -webkit-appearance: none; padding-right: 24px; }
+select.toggle:focus { outline: 2px solid var(--accent); }
+.selectwrap { position: relative; display: inline-flex; }
+.selectwrap::after { content: '▾'; position: absolute; right: 9px; top: 50%; transform: translateY(-52%); pointer-events: none; color: var(--muted); font-size: 12px; }
+.keys { display: inline-flex; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.keys kbd { font: inherit; font-size: 10.5px; padding: 0 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--chip); color: var(--fg); cursor: default; }
+footer { flex-wrap: nowrap; gap: 6px; }
+.keys { flex: 0 1 auto; min-width: 0; overflow: hidden; } /* never pushes the icons to a new line: the hints give way first */
+.hintpair { flex: none; }
+.selectwrap, .toggle { flex: none; }
+.current.clickable { cursor: pointer; border-radius: 8px; padding: 2px 10px; }
+.current.clickable:hover { background: var(--chip); }
+footer .spacer { flex: 1; }
 .env.DEV { background: #e8f5e9; color: #2e7d32; } .env.TST { background: #fff8e1; color: #9a6b00; } .env.PRD { background: #fdecea; color: #c62828; }
-.link { background: none; border: none; cursor: pointer; font-size: 16px; color: var(--muted); padding: 0 4px; }
-#q { width: 100%; font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--fg); }
-#q:focus { outline: 2px solid var(--accent); border-color: transparent; }
-.hint { color: var(--muted); font-size: 12px; margin: 6px 2px; min-height: 16px; }
+.link { background: none; border: none; cursor: pointer; font-size: 22px; line-height: 1; color: var(--muted); padding: 2px 6px; border-radius: 6px; }
+.link:hover { color: var(--fg); background: var(--chip); }
+#sysinfo { font-size: 18px; } /* the ⓘ glyph has a large bounding circle: smaller to look the same size as the cog */
+footer .link { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 28px; padding: 0; }
+/* fixed-height blocks: the popup must not resize while the user types */
+.search { display: flex; gap: 6px; align-items: stretch; }
+#q { flex: 1; min-width: 0; font: inherit; font-size: 14px; padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); color: var(--fg); }
+#q:focus { outline: 2px solid var(--tier, var(--accent)); border-color: transparent; }
+.toggle { font: inherit; font-size: 11px; white-space: nowrap; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--chip); color: var(--muted); cursor: pointer; }
+.toggle:hover { color: var(--fg); border-color: var(--accent); }
+.toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.hint { color: var(--muted); font-size: 12px; margin: 4px 8px 0; max-height: 32px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.hint:empty { display: none; } /* no dead space between the input and the first row */
+.search { margin-bottom: 2px; } /* with the list's own 6px top padding: the same 8px as between rows */
+footer { margin-top: 2px; } /* plus the list's 6px bottom padding */
 .list { list-style: none; margin: 0; padding: 0; }
-.list li { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+#list { max-height: 60vh; overflow-y: auto; padding: 6px 0; } /* grows with its rows up to 60vh, then scrolls; 6px breathing room top and bottom */
+.list li { display: flex; gap: 8px; align-items: baseline; height: 28px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+#list li { height: auto; min-height: 40px; align-items: flex-start; padding: 4px 8px; } /* rows grow with their content (chip strip) */
+#list .key { padding-top: 1px; }
+.list .body { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.list .body .title { flex: none; }
+.list .sub { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+/* action chips: a third line of the selected row, in normal flow; the active one filled, the others outlined */
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.vchip { font: inherit; font-size: 10px; line-height: 1.4; padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
+.vchip:hover { border-color: var(--accent); color: var(--fg); }
+.vchip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sub .count { color: var(--muted); }
+.mine { color: var(--accent); font-size: 8px; vertical-align: 2px; margin-right: 4px; }
+.key.user { color: var(--accent); } /* your own aliases: accent-coloured code */
+body.launcher #list li { min-height: 44px; }
+mark { background: transparent; color: inherit; font-weight: 700; text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 2px; }
 .list li.sel, .list li:hover { background: var(--sel); }
-.list .key { font-family: ui-monospace, Menlo, monospace; font-weight: 600; min-width: 70px; }
+.list .key { font-family: ui-monospace, Menlo, monospace; font-weight: 600; flex: 0 0 130px; width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* fixed column: titles line up */
+body.launcher .list .key { flex-basis: 160px; width: 160px; }
 .list .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list .tag { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .chip { display: inline-block; padding: 0 5px; border-radius: 8px; background: var(--chip); font-size: 10px; color: var(--muted); }
@@ -23,10 +83,47 @@ header { display: flex; align-items: center; justify-content: space-between; mar
 .chip.tenant { background: #e2f6e6; color: #1b6b2b; }
 .chip.live { background: #1b6b2b; color: #fff; }
 .chip.missing { background: #fdecea; color: #8a1c1c; }
+.chip.unassigned { background: var(--chip); color: var(--muted); border: 1px solid var(--line); }
 .list li.sel .chip.missing, .list li:hover .chip.missing { outline: 1px solid #c62828; }
-h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 2px 4px; }
+h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 8px 4px; }
+#recent { max-height: 140px; overflow: hidden; } /* 5 rows */
+#recent-title[hidden], #recent[hidden] { display: none; }
+.list .systag { margin-left: auto; padding: 0 7px; border-radius: 8px; background: var(--chip); font-size: 10.5px; font-weight: 600; letter-spacing: .02em; }
 .recent li .title { color: var(--muted); }
 .muted { color: var(--muted); }
 .empty { color: var(--muted); padding: 4px 8px; }
 .small { font: inherit; font-size: 11px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--chip); color: var(--fg); cursor: pointer; margin-left: 6px; }
 .small:hover { border-color: var(--accent); }
+
+/* launcher window (keyboard command): wider, bigger input, no fixed popup width */
+body.launcher { width: auto; height: 100vh; box-sizing: border-box; padding: 14px 18px 12px; display: flex; flex-direction: column; overflow: hidden; }
+body.launcher #q { font-size: 18px; padding: 10px 18px; }
+body.launcher #list { flex: 0 1 auto; height: auto; max-height: 60vh; min-height: 0; }
+body.launcher footer { margin-top: auto; }
+body.launcher #recent { flex: none; }
+body.launcher footer { flex: none; }
+body.launcher .toggle { font-size: 12px; }
+body.launcher { font-size: 14px; }
+body.launcher .current { font-size: 17px; }
+body.launcher .current .syshost { font-size: 13px; }
+body.launcher .hint { font-size: 13px; max-height: 36px; }
+body.launcher .list .sub { font-size: 12px; }
+body.launcher .list .tag { font-size: 12px; }
+body.launcher .chip { font-size: 11px; }
+body.launcher h2 { font-size: 11.5px; }
+body.launcher .list li { height: 32px; padding: 6px 8px; }
+body.launcher #list li { padding: 5px 8px; }
+body.launcher #recent { max-height: 128px; } /* 4 rows of 32px */
+
+/* page overlay: translucent panel over the blurred page (the host page draws the backdrop) */
+html:has(body.overlay) { background: transparent; }
+body.overlay { background: rgba(255, 255, 255, .66); height: auto; min-height: 0; box-sizing: border-box; } /* the host page sizes the panel to this content */
+body.overlay footer { margin-top: 2px; }
+body.overlay #q, body.overlay .toggle { background: rgba(255, 255, 255, .55); }
+body.overlay .list li.sel, body.overlay .list li:hover { background: rgba(0, 112, 242, .14); }
+@media (prefers-color-scheme: dark) {
+  body.overlay { background: rgba(18, 23, 29, .68); }
+  body.overlay #q, body.overlay .toggle { background: rgba(18, 23, 29, .5); }
+  body.overlay .list li.sel, body.overlay .list li:hover { background: rgba(74, 163, 255, .18); }
+}
+#options { font-size: 26px; } /* the ⚙ glyph is drawn small inside its em box: larger to match */
