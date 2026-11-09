@@ -1,13 +1,16 @@
 {
   "name": "slashn",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "Omnibox launcher for SAP Fiori apps on S/4HANA Cloud Public Edition (type `s <system> <alias>`)",
+  "description": "Launch SAP Fiori apps and classic transactions by alias or t-code from the address bar, the toolbar or a shortcut, on cloud and on-premise systems",
   "type": "module",
   "scripts": {
     "test": "node --test test/",
-    "seed:library": "node tools/fetch-apps-library.mjs"
+    "seed:library": "node tools/fetch-apps-library.mjs",
+    "pack": "node tools/pack.mjs"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "license": "MIT"
 }

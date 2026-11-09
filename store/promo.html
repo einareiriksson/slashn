@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>slashn promo</title>
+<style>
+  :root { --blue: #0070f2; --bg1: #0b1a2e; --bg2: #123a6b; }
+  html, body { margin: 0; background: #000; }
+  .tile { position: relative; overflow: hidden; display: flex; align-items: center; gap: 28px; padding: 0 36px; box-sizing: border-box;
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #fff;
+    background: radial-gradient(1200px 500px at 85% -20%, #2b7ef5 0%, transparent 60%), linear-gradient(135deg, var(--bg1), var(--bg2)); }
+  .tile.small { width: 440px; height: 280px; }
+  .tile.marquee { width: 1400px; height: 560px; padding: 0 90px; gap: 70px; }
+  .icon { flex: none; display: grid; place-items: center; border-radius: 26%; background: var(--blue); color: #fff; font: 700 1em Menlo, "SF Mono", Consolas, monospace; box-shadow: 0 18px 50px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.25); }
+  .small .icon { width: 112px; height: 112px; font-size: 64px; }
+  .marquee .icon { width: 260px; height: 260px; font-size: 150px; }
+  .text h1 { margin: 0 0 6px; font-weight: 700; letter-spacing: -.02em; }
+  .small h1 { font-size: 40px; }
+  .marquee h1 { font-size: 92px; margin-bottom: 14px; }
+  .text p { margin: 0; opacity: .88; line-height: 1.3; }
+  .small p { font-size: 15.5px; max-width: 250px; }
+  .marquee p { font-size: 34px; max-width: 820px; }
+  .cmd { display: inline-block; margin-top: 12px; padding: 4px 12px; border-radius: 999px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.22); font: 600 .92em Menlo, "SF Mono", Consolas, monospace; letter-spacing: .01em; }
+  .marquee .cmd { margin-top: 26px; padding: 10px 26px; font-size: 30px; }
+  .cmd b { color: #8fc1ff; font-weight: 600; }
+</style></head>
+<body>
+<div class="tile small" id="small">
+  <div class="icon">/n</div>
+  <div class="text"><h1>slashn</h1><p>SAP Fiori apps and transactions by alias, from the address bar.</p><span class="cmd"><b>s</b> va03 20012150</span></div>
+</div>
+<div class="tile marquee" id="marquee">
+  <div class="icon">/n</div>
+  <div class="text"><h1>slashn</h1><p>Open SAP Fiori apps and classic transactions by alias or t-code, on the right system, from the address bar or Alt+Shift+S.</p><span class="cmd"><b>s</b> va03 20012150</span></div>
+</div>
+</body></html>
