@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 – embedding API (unreleased)
+
+- `src/embed.js`: a synchronous, JSON-in/JSON-out API over the resolver (init, setConfig, suggest, resolve, recordLaunch, importConfig, systemFromParts) for hosts without `chrome.*`, used by the macOS launcher through JavaScriptCore. Tested in Node (`npm test`) and in the bare JavaScriptCore shell (`npm run test:jsc`).
+- Systems may carry desktop-only fields: `gui` (a SAP Logon landscape entry with client and language), `launchpad: false` for classic systems without a Fiori launchpad, `browserBundleId`. The extension stores them untouched; nothing changes for rows without them.
+- `package.json` exports the core modules and seed files for consumers of the repository.
+
 ## 1.0.0 – first public release
 
 - Address bar launcher: `s [system] alias [value]` opens Fiori apps and classic transactions by alias, t-code, app ID, intent or title, with ranked suggestions.

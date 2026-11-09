@@ -236,8 +236,20 @@ function guessEnv(host) {
 /** Builds a system row from a pasted URL; key is the first host label, made unique against `existing`. */
 export function systemFromUrl(input, existing = []) {
   const parsed = parseLaunchpadUrl(input);
-  if (!parsed) return null;
-  const { scheme, host, launchpadPath, launchpadQuery } = parsed;
+  return parsed ? systemFromParts(parsed, existing) : null;
+}
+
+/**
+ * The same from already-split URL parts ({ scheme, host, launchpadPath, launchpadQuery }); hosts without URL()
+ * (JavaScriptCore) parse the URL themselves and call this. Returns null without a host.
+ */
+export function systemFromParts(parts, existing = []) {
+  const p = parts || {};
+  const host = String(p.host ?? '').trim().toLowerCase();
+  if (!HOST_RE.test(host)) return null;
+  const scheme = String(p.scheme || '').toLowerCase() === 'http' ? 'http' : 'https';
+  const launchpadPath = String(p.launchpadPath || '').replace(/\/+$/, '') || DEFAULT_LAUNCHPAD_PATH;
+  const launchpadQuery = String(p.launchpadQuery ?? '').replace(/^\?/, '');
   const labels = host.replace(/:\d+$/, '').split('.');
   const base = (labels[0] || 'sys').toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[^a-z0-9]+/, '') || 'sys';
   const keys = new Set((existing || []).map((s) => String(s.key).toLowerCase()));
@@ -296,9 +308,31 @@ export async function writeChunked(area, key, items, maxBytes = SYNC_ITEM_BUDGET
   await area.remove(stale);
 }
 
+export const GUI_STRATEGIES = Object.freeze(['auto', 'sapc', 'sap']);
+
+/**
+ * How a desktop host (the macOS app) opens classic transactions on this system in SAP GUI: a SAP Logon landscape entry
+ * plus client and language. The extension stores it untouched; only the shape is bounded here.
+ */
+export function sanitizeGuiMapping(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+  const out = {
+    serviceUuid: s(raw.serviceUuid, 40),
+    serviceName: s(raw.serviceName, 120),
+    client: s(raw.client, 3),
+    language: s(raw.language, 2)?.toUpperCase() ?? null,
+    user: s(raw.user, 40),
+    strategy: GUI_STRATEGIES.includes(raw.strategy) ? raw.strategy : 'auto',
+  };
+  return out.serviceUuid || out.serviceName ? out : null;
+}
+
 export function normalizeSystem(raw) {
   const r = raw || {};
   const env = String(r.env || 'TST').toUpperCase();
+  const gui = sanitizeGuiMapping(r.gui);
+  const browserBundleId = typeof r.browserBundleId === 'string' && r.browserBundleId.trim() ? r.browserBundleId.trim().slice(0, 120) : null;
   const scheme = String(r.scheme || '').toLowerCase() === 'http' ? 'http' : 'https';
   // URL.host (tabs, content scripts) omits the default port, so the stored host must too or lookups never match.
   const host = String(r.host ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[/?#].*$/, '').replace(scheme === 'http' ? /:80$/ : /:443$/, '');
@@ -323,6 +357,10 @@ export function normalizeSystem(raw) {
     env: ENVS.includes(env) ? env : 'TST',
     edition: EDITIONS.includes(String(r.edition || '').toLowerCase()) ? String(r.edition).toLowerCase() : guessEdition(r.host),
     isDefault: Boolean(r.isDefault),
+    // Desktop-only fields, present only when set, so rows written by the extension keep their exact shape.
+    ...(r.launchpad === false ? { launchpad: false } : {}), // false: a classic system with no Fiori launchpad; host may be empty
+    ...(gui ? { gui } : {}),
+    ...(browserBundleId ? { browserBundleId } : {}),
   };
 }
 
@@ -333,11 +371,14 @@ export function validateSystems(systems) {
   let defaults = 0;
   (systems || []).forEach((s, i) => {
     const row = `row ${i + 1}`;
+    const guiOnly = s.launchpad === false;
     if (!KEY_RE.test(s.key)) errors.push(`${row}: key must match ${KEY_RE}`);
     if (keys.has(s.key.toLowerCase())) errors.push(`${row}: duplicate key "${s.key}"`);
     keys.add(s.key.toLowerCase());
-    if (!HOST_RE.test(s.host)) errors.push(`${row}: host must match ${HOST_RE}`);
-    if (!s.launchpadPath.startsWith('/')) errors.push(`${row}: launchpadPath must start with /`);
+    if (!guiOnly && !HOST_RE.test(s.host)) errors.push(`${row}: host must match ${HOST_RE}`);
+    if (!guiOnly && !s.launchpadPath.startsWith('/')) errors.push(`${row}: launchpadPath must start with /`);
+    if (guiOnly && !s.gui) errors.push(`${row}: a system without a launchpad needs a SAP GUI connection`);
+    if (s.gui?.client && !/^\d{3}$/.test(s.gui.client)) errors.push(`${row}: SAP GUI client must be three digits`);
     if (s.isDefault) defaults++;
   });
   if ((systems || []).length && defaults !== 1) errors.push(`exactly one system must be default (found ${defaults})`);

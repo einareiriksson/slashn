@@ -481,13 +481,13 @@ export function formatSystemSuggestion(system) {
 export function formatDefaultDescription(parsed, topMatch = null) {
   const sys = parsed?.system;
   if (!sys) return 'No systems configured – type anything and press Enter to open slashn options';
-  const where = `<dim>[${escapeXml(sys.key)} · ${escapeXml(sys.host)}]</dim>`;
+  const where = `<dim>[${escapeXml(sys.key)} · ${escapeXml(sys.host || 'SAP GUI')}]</dim>`; // a desktop-only system may have no launchpad host
   switch (parsed.kind) {
     case 'systems':
       return 'Select a system below, or press Enter to open slashn options';
     case 'empty':
     case 'home':
-      return `Open launchpad home ${where}`;
+      return sys.launchpad === false ? `Open SAP GUI logon ${where}` : `Open launchpad home ${where}`;
     case 'query':
       if (topMatch) {
         const e = topMatch.entry;

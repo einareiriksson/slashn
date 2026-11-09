@@ -1,13 +1,30 @@
 {
   "name": "slashn",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Launch SAP Fiori apps and classic transactions by alias or t-code from the address bar, the toolbar or a shortcut, on cloud and on-premise systems",
   "type": "module",
+  "exports": {
+    ".": "./src/embed.js",
+    "./embed": "./src/embed.js",
+    "./resolver": "./src/resolver.js",
+    "./storage": "./src/storage.js",
+    "./tcodes": "./src/tcodes.js",
+    "./csv": "./src/csv.js",
+    "./seed/*": "./src/seed/*"
+  },
+  "files": [
+    "src",
+    "manifest.json",
+    "icons",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "test": "node --test test/",
     "seed:library": "node tools/fetch-apps-library.mjs",
-    "pack": "node tools/pack.mjs"
+    "pack": "node tools/pack.mjs",
+    "test:jsc": "/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc -m test/embed.jsc.mjs"
   },
   "engines": {
     "node": ">=20"
