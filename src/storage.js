@@ -569,6 +569,28 @@ export function createStorage(areas = null) {
     async getScanMeta() { return one(local, KEYS.SCAN_META, {}); },
 
     // misc
+    /**
+     * Change a system's key everywhere it is stored: the system row, the launch history and the last-used marker.
+     * Throws when the new key is invalid or taken (nothing is written then). Returns the updated systems.
+     */
+    async renameSystemKey(oldKey, newKey) {
+      const from = String(oldKey ?? '').trim();
+      const to = String(newKey ?? '').trim();
+      const systems = (await api.getSystems()).map((s) => ({ ...s }));
+      const i = systems.findIndex((s) => s.key.toLowerCase() === from.toLowerCase());
+      if (i < 0) throw new Error(`no system "${from}"`);
+      if (!to) throw new Error('the key cannot be empty');
+      const was = systems[i].key;
+      systems[i].key = to;
+      const errors = validateSystems(systems);
+      if (errors.length) throw new Error(errors.join('; ').replace(/^row \d+: /, ''));
+      if (was === to) return systems;
+      await api.setSystems(systems);
+      const recent = (await one(local, KEYS.RECENT, [])).map((r) => (r && r.systemKey && r.systemKey.toLowerCase() === from.toLowerCase() ? { ...r, systemKey: to } : r));
+      const last = await one(local, KEYS.LAST_SYSTEM, null);
+      await local.set({ [KEYS.RECENT]: recent, ...(last && last.toLowerCase() === from.toLowerCase() ? { [KEYS.LAST_SYSTEM]: to } : {}) });
+      return systems;
+    },
     async getRecent() { return one(local, KEYS.RECENT, []); },
     async pushRecent(launch) {
       const list = [launch, ...(await one(local, KEYS.RECENT, []))].slice(0, RECENT_LIMIT);

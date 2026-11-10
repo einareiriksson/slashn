@@ -147,16 +147,18 @@ async function describeTab(snap) {
     // "Add as system" names a system after its host: that is no display name, so it takes the one-line form too
     const name = current.name && current.name.trim().toLowerCase() !== current.host.toLowerCase() ? current.name.trim() : '';
     const said = (v) => (name + ' ' + current.host).toLowerCase().includes(v.toLowerCase());
-    const key = said(current.key) ? '' : ` · ${esc(current.key)}`;
+    // the key is what you type: shown as a chip that renames it on click (the header itself opens the system info)
+    const chip = `<button type="button" class="keychip" id="rename-key" title="Rename the key you type for this system">${esc(current.key)} <span class="pen">✎</span></button>`;
     if (name) {
-      header.innerHTML = `<div class="sysname">${esc(name)}${pill}</div><div class="syshost">${esc(current.host)}${key}</div>`;
+      header.innerHTML = `<div class="sysname">${esc(name)}${pill}</div><div class="syshost">${esc(current.host)}${said(current.key) ? '' : ' · '}${chip}</div>`;
     } else {
       // no display name: one line – the system key as primary (it is what you type), the host dim after it
-      header.innerHTML = `<div class="sysname">${esc(current.key)}${pill} <span class="syshost inline">${esc(current.host)}</span></div>`;
+      header.innerHTML = `<div class="sysname">${chip}${pill} <span class="syshost inline">${esc(current.host)}</span></div>`;
     }
     const openInfo = async () => { await send({ type: MSG.OPEN_SYSTEM_INFO, host: targetKey(current) }); closeSelf(); };
     info.onclick = openInfo;
     header.onclick = openInfo; // the header is the system: clicking it opens the system-info panel too
+    $('#rename-key').addEventListener('click', (ev) => { ev.stopPropagation(); renameKey(current); });
     input.placeholder = `alias [value] – or <system> alias for another system`;
     return;
   }
@@ -174,6 +176,49 @@ async function describeTab(snap) {
   $('#current').innerHTML = snap.systems.length
     ? `<span class="muted">Not on a registered tenant · default: ${esc(snap.systems.find((s) => s.isDefault)?.key || snap.systems[0].key)}</span>`
     : '<span class="muted">No systems configured – paste a launchpad URL in options, or open one and click the icon</span>';
+}
+
+/** Inline rename of the current system's key: Enter saves, Esc cancels; the history and last-used marker follow. */
+function renameKey(current) {
+  const header = $('#current');
+  const hint = $('#hint');
+  header.onclick = null;
+  header.innerHTML = `<form id="rename-form" class="rename"><label for="rename-input" class="muted">Key for ${esc(current.host)}</label><input id="rename-input" value="${esc(current.key)}" autocomplete="off" spellcheck="false" maxlength="40"><button type="submit" class="small">Save</button><button type="button" id="rename-cancel" class="small ghost">Cancel</button></form>`;
+  const field = $('#rename-input');
+  const form = $('#rename-form');
+  hintHold = true;
+  hint.textContent = 'Letters, digits, _ - / . – this is what you type before an alias. Enter saves, Esc cancels.';
+  const finish = async () => {
+    hintHold = false;
+    const state = await send({ type: MSG.GET_STATE });
+    await describeTab(state?.snapshot || { systems: [], recent: [] });
+    recent = state?.snapshot?.recent || recent;
+    renderRecent();
+    $('#q').focus();
+    resolve($('#q').value);
+  };
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const next = field.value.trim();
+    try {
+      await storage.renameSystemKey(current.key, next);
+      await finish();
+      hintHold = true;
+      hint.textContent = next === current.key ? 'Key unchanged' : `Renamed ${current.key} → ${next}: type "${next} alias" to launch here`;
+      setTimeout(() => { hintHold = false; resolve($('#q').value); }, 3000);
+    } catch (e) {
+      hint.textContent = String(e.message || e);
+      field.focus();
+      field.select();
+    }
+  });
+  $('#rename-cancel').addEventListener('click', () => finish());
+  field.addEventListener('keydown', (ev) => {
+    ev.stopPropagation(); // the launcher's own key handling (↑↓, Tab, Esc) must not see these
+    if (ev.key === 'Escape') { ev.preventDefault(); finish(); }
+  });
+  field.focus();
+  field.select();
 }
 
 async function addCurrent(snap) {

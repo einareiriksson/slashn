@@ -127,3 +127,12 @@ body.overlay .list li.sel, body.overlay .list li:hover { background: rgba(0, 112
   body.overlay .list li.sel, body.overlay .list li:hover { background: rgba(74, 163, 255, .18); }
 }
 #options { font-size: 26px; } /* the ⚙ glyph is drawn small inside its em box: larger to match */
+
+/* rename the system key from the header */
+.keychip { font: inherit; font-weight: 600; color: inherit; background: var(--chip); border: 0; border-radius: 7px; padding: 0 7px; cursor: text; line-height: 1.5; }
+.keychip .pen { font-size: 11px; color: var(--muted); margin-left: 2px; opacity: 0; transition: opacity .12s; }
+.keychip:hover .pen, .keychip:focus-visible .pen { opacity: 1; }
+.syshost .keychip { font-size: 12px; font-weight: 500; }
+.rename { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.rename label { white-space: nowrap; }
+.rename input { flex: 1; min-width: 80px; font: inherit; font-weight: 600; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border, #8884); background: transparent; color: inherit; }

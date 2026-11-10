@@ -357,3 +357,21 @@ test('systems files: export, import from either file kind, merge by key or targe
   const rep = await api.importSystems([{ key: 'only', host: 'only.example.com' }], { replace: true });
   assert.deepEqual([rep.total, (await api.getSystems())[0].isDefault], [1, true]);
 });
+
+test('renameSystemKey: the row, the launch history and the last-used marker follow; invalid or taken keys are refused', async () => {
+  const local = memoryArea({ recent: [{ ts: 1, systemKey: 'acd', intent: 'A-b' }, { ts: 2, systemKey: 'erp', intent: 'C-d' }], lastUsedSystemKey: 'acd' });
+  const api = createStorage({ sync: memoryArea(), local, session: memoryArea() });
+  await api.setSystems([normalizeSystem({ key: 'acd', host: 'a.example.com', isDefault: true }), normalizeSystem({ key: 'erp', host: 'e.example.com' })]);
+  const out = await api.renameSystemKey('acd', 'acd400');
+  assert.deepEqual(out.map((s) => s.key), ['acd400', 'erp']);
+  assert.deepEqual((await api.getSystems()).map((s) => s.key), ['acd400', 'erp']);
+  assert.deepEqual((await api.getRecent()).map((r) => r.systemKey), ['acd400', 'erp']);
+  assert.equal(await api.getLastUsedSystemKey(), 'acd400');
+  await assert.rejects(api.renameSystemKey('acd400', 'erp'), /duplicate key/);
+  await assert.rejects(api.renameSystemKey('acd400', 'a b'), /key may contain/);
+  await assert.rejects(api.renameSystemKey('acd400', ''), /empty/);
+  await assert.rejects(api.renameSystemKey('nope', 'x'), /no system/);
+  assert.deepEqual((await api.getSystems()).map((s) => s.key), ['acd400', 'erp'], 'refused renames write nothing');
+  await api.renameSystemKey('ACD400', 'ACD400');
+  assert.deepEqual((await api.getSystems()).map((s) => s.key), ['ACD400', 'erp'], 'a case change of the same key is allowed and stored');
+});

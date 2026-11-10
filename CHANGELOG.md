@@ -2,6 +2,7 @@
 
 ## 1.2.1 – one host, several clients; systems files (unreleased)
 
+- Launcher: click the system key in the header to rename it in place (Enter saves, Esc cancels); the launch history follows.
 - A tab on a client nobody registered (acd.example.com client 600 when only client 400 is a system) is unregistered: the launcher offers to add it instead of treating it as the other client.
 - Fix: the launcher stuck at "Checking current tab…" on an unregistered launchpad (a variable lost in the 1.2.0 refactor).
 - Systems › Import… / Export…: the system list as a `slashn-systems` JSON file to share with colleagues (no aliases, no scan results). Import merges: a row with the same key or the same host/client updates that system, new rows are added, your default stays. A full backup file is accepted too.
