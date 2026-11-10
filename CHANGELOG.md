@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.1.1 – embedding API (unreleased)
+## 1.1.2 – embedding API (unreleased)
+
+- System keys may contain `/` and `.` (for example `acd/400`).
 
 - `suggest` returns the launchpad home URL for an empty line or a bare system key.
 

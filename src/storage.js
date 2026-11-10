@@ -187,7 +187,7 @@ export function editionFromSystemInfo(info) {
   return null;
 }
 export const HOST_RE = /^[a-z0-9.-]+(:\d{1,5})?$/;
-export const KEY_RE = /^[a-z0-9][a-z0-9_-]*$/i; // the key keeps the case it was typed in; matching is case-insensitive
+export const KEY_RE = /^[a-z0-9][a-z0-9_\/.-]*$/i; // "acd", "acd/400", "s4.dev"; the key keeps the case it was typed in; matching is case-insensitive
 export const ALIAS_RE = /^[a-z0-9][a-z0-9_./-]*$/;
 export const DEFAULT_HOST_SUFFIX = '.s4hana.cloud.sap';
 /** Hosts covered by the static manifest permissions; anything else needs a runtime grant + dynamic content scripts. */
@@ -372,7 +372,7 @@ export function validateSystems(systems) {
   (systems || []).forEach((s, i) => {
     const row = `row ${i + 1}`;
     const guiOnly = s.launchpad === false;
-    if (!KEY_RE.test(s.key)) errors.push(`${row}: key must match ${KEY_RE}`);
+    if (!KEY_RE.test(s.key)) errors.push(`${row}: key may contain letters, digits, _ - / . and must start with a letter or digit`);
     if (keys.has(s.key.toLowerCase())) errors.push(`${row}: duplicate key "${s.key}"`);
     keys.add(s.key.toLowerCase());
     if (!guiOnly && !HOST_RE.test(s.host)) errors.push(`${row}: host must match ${HOST_RE}`);

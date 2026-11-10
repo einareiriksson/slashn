@@ -11,7 +11,7 @@ import {
   buildSeedEntries, migrateSnapshot, normalizeSystem, validateSystems, systemFromParts, sanitizeSettings, KEYS, RECENT_LIMIT, SCHEMA_VERSION,
 } from './storage.js';
 
-export const CORE_VERSION = '1.1.1'; // kept equal to package.json by test/embed.test.mjs
+export const CORE_VERSION = '1.1.2'; // kept equal to package.json by test/embed.test.mjs
 
 const guesser = makeGuesser();
 const SOURCE_FILTERS = Object.freeze({ mine: ['user', 'import'], discovered: ['discovered'], seed: ['seed'], library: ['library'] });
