@@ -2,6 +2,7 @@
 
 ## 1.2.1 – one host, several clients; systems files (unreleased)
 
+- Options: the key field accepts `/` and `.` too (the browser-side pattern lagged behind the 1.1.2 rule).
 - Launcher: click the system key in the header to rename it in place (Enter saves, Esc cancels); the launch history follows.
 - A tab on a client nobody registered (acd.example.com client 600 when only client 400 is a system) is unregistered: the launcher offers to add it instead of treating it as the other client.
 - Fix: the launcher stuck at "Checking current tab…" on an unregistered launchpad (a variable lost in the 1.2.0 refactor).

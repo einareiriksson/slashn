@@ -235,7 +235,7 @@ function systemForm(s, isNew) {
   const opt = (list, cur, labels) => list.map((x) => `<option value="${esc(x)}" ${x === cur ? 'selected' : ''}>${esc(labels ? labels[x] : x)}</option>`).join('');
   return `<form class="form editor" data-sys-form="${esc(isNew ? NEW : targetKey(s))}">
     <div class="fields">
-      <label>Key <input name="key" value="${esc(v.key)}" placeholder="acd" autocomplete="off" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" title="Letters, digits, _ or - and no spaces: what you type before the alias, as in “s acd me23n” (any case works when typing)"></label>
+      <label>Key <input name="key" value="${esc(v.key)}" placeholder="acd" autocomplete="off" required pattern="[A-Za-z0-9][A-Za-z0-9_/.\\-]*" title="Letters, digits, _ - / . and no spaces, starting with a letter or digit: what you type before the alias, as in “s acd me23n” or “s pa4/080 me23n” (any case works when typing)"></label>
       <label class="wide">Name <input name="name" value="${esc(v.name)}" placeholder="Customer A – Development"></label>
       <label>Customer <input name="customer" value="${esc(v.customer)}" placeholder="Customer A"></label>
       <label>Environment <select name="env">${opt(ENVS, v.env)}</select></label>
