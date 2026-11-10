@@ -671,6 +671,24 @@ export function createStorage(areas = null) {
       return { ...merged, total: merged.systems.length };
     },
 
+    /** One system's scan as a slashn-scan file; throws when the target has not been scanned. */
+    async exportScan(target) {
+      const system = systemByTarget(await api.getSystems(), target);
+      if (!system) throw new Error(`No system on ${target}`);
+      const [record, meta] = await Promise.all([api.getDiscovered(target), api.getScanMeta()]);
+      return exportScan(system, record, meta[target]);
+    },
+
+    /** A slashn-scan file: adds the system when it is unknown and stores the scan under its target. */
+    async importScan(obj) {
+      const r = applyScan({ systems: await api.getSystems(), discovered: await api.getDiscovered(), scanMeta: await api.getScanMeta() }, obj);
+      const errors = validateSystems(r.systems);
+      if (errors.length) throw new Error(errors.join('; '));
+      if (r.addedSystem) await api.setSystems(r.systems);
+      await local.set({ [KEYS.DISCOVERED]: r.discovered, [KEYS.SCAN_META]: r.scanMeta });
+      return { key: r.key, target: r.target, appCount: r.appCount, addedSystem: r.addedSystem };
+    },
+
     async importJson(obj, { replace = true } = {}) {
       if (!obj || obj.format !== 'slashn-config') throw new Error('Not a slashn config export');
       const migrated = migrateSnapshot({
@@ -726,6 +744,57 @@ export function mergeSystems(current, incoming) {
   if (out.length && !out.some((s) => s.isDefault)) out[0].isDefault = true;
   if (out.filter((s) => s.isDefault).length > 1) { let seen = false; for (const s of out) { if (s.isDefault && seen) s.isDefault = false; if (s.isDefault) seen = true; } }
   return { systems: out, added, updated };
+}
+
+// ---------------------------------------------------------------- scan files (one system's discovered apps, to share or to feed the desktop app)
+
+export const SCAN_FORMAT = 'slashn-scan';
+
+/**
+ * One system's scan as a file: the system row (so the receiver can add it when missing), its target, the discovered
+ * record and the scan summary. `meta` may be omitted; it is then derived from the record as setDiscovered does.
+ */
+export function exportScan(system, record, meta) {
+  const sys = normalizeSystem(system);
+  const target = targetKey(sys);
+  if (!target) throw new Error('A system without a host has no scan to export');
+  if (!record || typeof record !== 'object') throw new Error(`${sys.key} has not been scanned yet`);
+  const rec = sanitizeDiscoveredRecord(record);
+  const info = rec.system;
+  const derived = { lastScanned: rec.scannedAt, appCount: rec.entries.length, system: info, detectedEdition: editionFromSystemInfo(info), ...(rec.ui5Version ? { ui5Version: rec.ui5Version } : {}) };
+  return { format: SCAN_FORMAT, schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), system: sys, target, discovered: rec, scanMeta: sanitizeScanMeta(meta || derived) };
+}
+
+/** The parts of a scan file, sanitised; throws when the object is not one. */
+export function scanFromImport(obj) {
+  if (!obj || typeof obj !== 'object' || obj.format !== SCAN_FORMAT) throw new Error('Not a slashn scan file (expected "format": "slashn-scan")');
+  if (!obj.system || typeof obj.system !== 'object' || !obj.discovered || typeof obj.discovered !== 'object') throw new Error('The scan file has no system or no scan in it');
+  const system = normalizeSystem(obj.system);
+  const target = targetKey(system);
+  if (!target) throw new Error('The scan file names a system without a host');
+  const discovered = sanitizeDiscoveredRecord(obj.discovered);
+  const scanMeta = sanitizeScanMeta(obj.scanMeta || { lastScanned: discovered.scannedAt, appCount: discovered.entries.length, system: discovered.system, ui5Version: discovered.ui5Version });
+  return { system, target, discovered, scanMeta };
+}
+
+/**
+ * Apply a scan file to a configuration: the system is merged into the list when no system has its key or target
+ * (an existing one is left as it is), and the scan replaces whatever was stored for that target.
+ */
+export function applyScan(current, file) {
+  const scan = scanFromImport(file);
+  const systems = (current.systems || []).map((s) => ({ ...s }));
+  const exists = systems.some((o) => o.key.toLowerCase() === scan.system.key.toLowerCase() || targetKey(o) === scan.target);
+  const merged = exists ? { systems, added: 0 } : mergeSystems(systems, [scan.system]);
+  return {
+    systems: merged.systems,
+    discovered: { ...(current.discovered || {}), [scan.target]: scan.discovered },
+    scanMeta: { ...(current.scanMeta || {}), [scan.target]: scan.scanMeta },
+    target: scan.target,
+    key: (merged.systems.find((o) => targetKey(o) === scan.target) || scan.system).key,
+    appCount: scan.discovered.entries.length,
+    addedSystem: merged.added > 0,
+  };
 }
 
 /** Later items win. */

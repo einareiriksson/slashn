@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "slashn",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Launch SAP Fiori apps and classic transactions by alias or t-code: address bar, toolbar or Alt+Shift+S, on cloud and on-premise.",
   "minimum_chrome_version": "120",
   "icons": {

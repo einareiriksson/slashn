@@ -1,6 +1,6 @@
 {
   "name": "slashn",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "private": true,
   "description": "Launch SAP Fiori apps and classic transactions by alias or t-code from the address bar, the toolbar or a shortcut, on cloud and on-premise systems",
   "type": "module",

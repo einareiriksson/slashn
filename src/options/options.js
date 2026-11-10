@@ -645,6 +645,30 @@ document.addEventListener('click', async (ev) => {
         }
         break;
       }
+      case 'export-scan': {
+        if (!ui.discHost) return;
+        try {
+          const file = await storage.exportScan(ui.discHost);
+          download(`slashn-scan-${file.system.key.replace(/[^A-Za-z0-9_.-]+/g, '_')}-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(file, null, 2), 'application/json');
+        } catch (e) {
+          toast(String(e.message || e), 5000);
+        }
+        break;
+      }
+      case 'import-scan': {
+        const f = await readFile($('#file-scan'));
+        if (!f) return;
+        let obj;
+        try { obj = JSON.parse(f.text); } catch { toast(`${f.name} is not JSON`, 4000); return; }
+        try {
+          const r = await storage.importScan(obj);
+          ui.discHost = r.target;
+          toast(`Imported the scan of ${r.key}: ${r.appCount} apps${r.addedSystem ? ', system added' : ''}`, 4000);
+        } catch (e) {
+          toast(String(e.message || e), 6000);
+        }
+        break;
+      }
       case 'export-json': {
         const data = await storage.exportJson({ includeDiscovered: $('#include-discovered').checked });
         download(`slashn-config-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2), 'application/json');

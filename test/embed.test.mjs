@@ -187,6 +187,17 @@ test('importConfig: replace and merge like the extension, scan data per host', (
   assert.equal(replacedList.systems[0].isDefault, true);
   assert.equal(replacedList.recent.length, 1, 'replacing the system list keeps everything else');
   assert.equal(core.exportSystems(only.systems).format, 'slashn-systems');
+
+  // a scan file: the system comes along when unknown, the scan lands under its target, nothing else moves
+  const scanFile = core.exportScan({ key: 'acd600', host: 'acd.example.com:8443', launchpadQuery: 'sap-client=600' }, { scannedAt: '2026-11-01T10:00:00Z', entries: [{ intent: 'PurchaseOrder-manage', title: 'Manage POs' }] });
+  assert.equal(scanFile.format, 'slashn-scan');
+  const withScan = core.importConfig(current, scanFile, { replace: true });
+  assert.deepEqual(withScan.systems.map((s) => s.key), ['acd', 'erp', 'gui', 'acd600']);
+  assert.deepEqual(Object.keys(withScan.discovered).sort(), ['acd.example.com:8443/600', 'erp.example.com/100']);
+  assert.equal(withScan.scanMeta['acd.example.com:8443/600'].appCount, 1);
+  assert.deepEqual(withScan.userAliases, normalizedCurrentAliases(current));
+  assert.equal(withScan.recent.length, 1, 'a scan file never clears the history');
+  assert.equal(core.json.importConfig(JSON.stringify(current), JSON.stringify(scanFile), '{}') !== undefined, true);
 });
 
 const normalizedCurrentAliases = (cfg) => core.normalizeConfig(cfg).userAliases;

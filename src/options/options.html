@@ -118,7 +118,10 @@
           <div class="seg" id="disc-host"></div>
           <span class="spacer"></span>
           <button data-action="rescan-selected">Rescan</button>
+          <button data-action="export-scan" class="ghost" title="Save this system's scan as a file: for a colleague, or for slashn for Mac">Export scan…</button>
+          <button data-action="import-scan" class="ghost" title="Load a scan file someone exported; the system is added if you do not have it">Import scan…</button>
           <button data-action="clear-selected" class="ghost danger">Clear</button>
+          <input type="file" id="file-scan" accept="application/json,.json" hidden>
         </div>
         <div id="disc-meta" class="meta"></div>
         <div class="searchbar"><input type="search" id="disc-filter" placeholder="Search intent, title or app ID…" autocomplete="off"></div>

@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { clientOf, targetKey, systemByTarget, systemForUrl, isOnTarget, systemFromUrl as sysFromUrl, exportSystems, systemsFromImport, mergeSystems } from '../src/storage.js';
+import { clientOf, targetKey, systemByTarget, systemForUrl, isOnTarget, systemFromUrl as sysFromUrl, exportSystems, systemsFromImport, mergeSystems, exportScan, scanFromImport, applyScan } from '../src/storage.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
@@ -374,4 +374,45 @@ test('renameSystemKey: the row, the launch history and the last-used marker foll
   assert.deepEqual((await api.getSystems()).map((s) => s.key), ['acd400', 'erp'], 'refused renames write nothing');
   await api.renameSystemKey('ACD400', 'ACD400');
   assert.deepEqual((await api.getSystems()).map((s) => s.key), ['ACD400', 'erp'], 'a case change of the same key is allowed and stored');
+});
+
+test('scan files: one system\'s scan travels on its own, and import adds the system when it is unknown', async () => {
+  const acd = { key: 'acd600', host: 'acd.example.com:8443', launchpadQuery: 'sap-client=600', name: 'ACD' };
+  const record = { scannedAt: '2026-11-01T10:00:00Z', ui5Version: '1.120.0', system: { systemName: 'ACD', client: '600', productVersion: 'SAP S/4HANA 2023' }, entries: [{ intent: 'PurchaseOrder-manage', title: 'Manage POs' }, { intent: 'Shell-startGUI', title: 'SE16' }], methods: { service: 'ok' } };
+  const file = exportScan(acd, record);
+  assert.equal(file.format, 'slashn-scan');
+  assert.equal(file.target, 'acd.example.com:8443/600');
+  assert.equal(file.system.key, 'acd600');
+  assert.equal(file.discovered.entries.length, 2);
+  assert.deepEqual([file.scanMeta.lastScanned, file.scanMeta.appCount, file.scanMeta.ui5Version], ['2026-11-01T10:00:00Z', 2, '1.120.0']);
+  assert.throws(() => exportScan(acd, null), /not been scanned/);
+  assert.throws(() => scanFromImport({ format: 'slashn-systems', systems: [] }), /slashn-scan/);
+  assert.throws(() => scanFromImport({ format: 'slashn-scan', system: acd }), /no system or no scan/);
+
+  // into a configuration that lacks the system
+  const r = applyScan({ systems: [{ key: 'erp', host: 'erp.example.com', isDefault: true }], discovered: { 'erp.example.com': { entries: [] } }, scanMeta: {} }, file);
+  assert.deepEqual(r.systems.map((s) => s.key), ['erp', 'acd600']);
+  assert.equal(r.systems[0].isDefault, true, 'the current default stays');
+  assert.equal(r.addedSystem, true);
+  assert.deepEqual(Object.keys(r.discovered).sort(), ['acd.example.com:8443/600', 'erp.example.com']);
+  assert.equal(r.scanMeta['acd.example.com:8443/600'].appCount, 2);
+
+  // into one that has the system under another key: the existing row is kept, the scan replaces the old one
+  const r2 = applyScan({ systems: [{ key: 'tst', host: 'acd.example.com:8443', launchpadQuery: 'sap-client=600', name: 'mine' }], discovered: { 'acd.example.com:8443/600': { entries: [{ intent: 'Old-thing' }] } }, scanMeta: {} }, file);
+  assert.deepEqual(r2.systems.map((s) => [s.key, s.name]), [['tst', 'mine']]);
+  assert.equal(r2.addedSystem, false);
+  assert.equal(r2.key, 'tst');
+  assert.equal(r2.discovered['acd.example.com:8443/600'].entries.length, 2);
+
+  const api = mk();
+  await api.setSystems([{ key: 'erp', host: 'erp.example.com', isDefault: true }]);
+  await assert.rejects(api.exportScan('erp.example.com'), /not been scanned/);
+  await assert.rejects(api.exportScan('nobody.example.com'), /No system/);
+  const res = await api.importScan(file);
+  assert.deepEqual(res, { key: 'acd600', target: 'acd.example.com:8443/600', appCount: 2, addedSystem: true });
+  assert.equal((await api.getSystems()).length, 2);
+  assert.equal((await api.getDiscovered('acd.example.com:8443/600')).entries.length, 2);
+  const again = await api.exportScan('acd.example.com:8443/600');
+  assert.deepEqual(again.discovered.entries, file.discovered.entries);
+  assert.equal(again.scanMeta.detectedEdition, file.scanMeta.detectedEdition);
 });

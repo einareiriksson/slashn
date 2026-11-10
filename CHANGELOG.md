@@ -1,6 +1,11 @@
 # Changelog
 
-## 1.2.1 – one host, several clients; systems files (unreleased)
+## 1.3.0 – scan files
+
+- Discovered apps › Export scan… / Import scan…: one system's scan as a `slashn-scan` JSON file (system row, discovered apps, scan summary). Import stores the scan under the system's host/client and adds the system when it is unknown; an existing system keeps its key and settings. slashn for Mac imports the same file, which is how a desktop launcher without a browser gets to know what a system offers.
+- Embedding API: `importConfig` accepts `slashn-scan` files; `exportScan(system, record)` builds one.
+
+## 1.2.1 – one host, several clients; systems files
 
 - Options: the key field accepts `/` and `.` too (the browser-side pattern lagged behind the 1.1.2 rule).
 - Launcher: click the system key in the header to rename it in place (Enter saves, Esc cancels); the launch history follows.

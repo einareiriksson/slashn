@@ -8,10 +8,10 @@ import {
 } from './resolver.js';
 import { makeGuesser } from './tcodes.js';
 import {
-  buildSeedEntries, migrateSnapshot, normalizeSystem, validateSystems, systemFromParts, sanitizeSettings, targetKey, mergeSystems, systemsFromImport, exportSystems, SYSTEMS_FORMAT, KEYS, RECENT_LIMIT, SCHEMA_VERSION,
+  buildSeedEntries, migrateSnapshot, normalizeSystem, validateSystems, systemFromParts, sanitizeSettings, targetKey, mergeSystems, systemsFromImport, exportSystems, SYSTEMS_FORMAT, applyScan, exportScan, SCAN_FORMAT, KEYS, RECENT_LIMIT, SCHEMA_VERSION,
 } from './storage.js';
 
-export const CORE_VERSION = '1.2.1'; // kept equal to package.json by test/embed.test.mjs
+export const CORE_VERSION = '1.3.0'; // kept equal to package.json by test/embed.test.mjs
 
 const guesser = makeGuesser();
 const SOURCE_FILTERS = Object.freeze({ mine: ['user', 'import'], discovered: ['discovered'], seed: ['seed'], library: ['library'] });
@@ -225,10 +225,11 @@ export function recordLaunch(launch) {
   return { recent: cfg.recent, lastUsedSystemKey: cfg.lastUsedSystemKey };
 }
 
-export { normalizeSystem, validateSystems, systemFromParts, exportSystems, systemsFromImport, mergeSystems };
+export { normalizeSystem, validateSystems, systemFromParts, exportSystems, systemsFromImport, mergeSystems, exportScan };
 
 /**
  * Merge an extension export (or another config file) into the current configuration, as the extension's importJson does:
+ * a `slashn-systems` file touches the system list, a `slashn-scan` file one system's scan (adding that system when unknown);
  * replace, or merge systems by key and aliases by alias (incoming wins) and union the hidden list. Scan data is taken per
  * host from the incoming file in both modes. Throws on anything that is not a slashn-config export.
  */
@@ -240,6 +241,11 @@ export function importConfig(current, incoming, { replace = true } = {}) {
     const systems = replace ? list : mergeSystems(cur.systems, list).systems;
     if (replace && systems.length && !systems.some((s) => s.isDefault)) systems[0].isDefault = true;
     return normalizeConfig({ ...cur, systems });
+  }
+  if (incoming && incoming.format === SCAN_FORMAT) {
+    // a scan file: the system is added when unknown, the scan replaces that target's; "replace" has no meaning here
+    const r = applyScan(cur, incoming);
+    return normalizeConfig({ ...cur, systems: r.systems, discovered: r.discovered, scanMeta: r.scanMeta });
   }
   if (!incoming || incoming.format !== 'slashn-config') throw new Error('Not a slashn config export');
   const inc = normalizeConfig(incoming);
@@ -258,7 +264,7 @@ export function importConfig(current, incoming, { replace = true } = {}) {
 
 // ---------------------------------------------------------------- JSON facade
 
-const api = { init, setConfig, getConfig, reset, version, suggest, resolve, recordLaunch, normalizeSystem, validateSystems, systemFromParts, normalizeConfig, importConfig, exportSystems };
+const api = { init, setConfig, getConfig, reset, version, suggest, resolve, recordLaunch, normalizeSystem, validateSystems, systemFromParts, normalizeConfig, importConfig, exportSystems, exportScan };
 
 const parseArg = (a) => (typeof a === 'string' ? JSON.parse(a) : a);
 
