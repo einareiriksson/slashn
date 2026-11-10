@@ -2,6 +2,7 @@
 
 ## 1.2.1 – one host, several clients; systems files (unreleased)
 
+- Fix: the launcher stuck at "Checking current tab…" on an unregistered launchpad (a variable lost in the 1.2.0 refactor).
 - Systems › Import… / Export…: the system list as a `slashn-systems` JSON file to share with colleagues (no aliases, no scan results). Import merges: a row with the same key or the same host/client updates that system, new rows are added, your default stays. A full backup file is accepted too.
 - Two clients of the same system are two systems: pasting a launchpad URL with `sap-client=400` creates `acd400`, and `sap-client=600` creates `acd600`, each with its own scan. The tab you are on is recognised by host and client, so suggestions, tab reuse and scans go to the right client. Scan results of systems with a client move to a `host/client` key once (storage schema 2).
 

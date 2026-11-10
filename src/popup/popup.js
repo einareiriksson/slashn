@@ -127,6 +127,8 @@ async function init() {
 
 async function describeTab(snap) {
   const input = $('#q');
+  let host = '';
+  try { host = tab?.url ? new URL(tab.url).host.toLowerCase() : ''; } catch { host = ''; }
   const current = systemForUrl(snap.systems, tab?.url); // host and, where systems differ by client, the URL's sap-client
   contextHost = current ? targetKey(current) : null;
   contextKey = current ? current.key : null;
@@ -158,7 +160,12 @@ async function describeTab(snap) {
     input.placeholder = `alias [value] – or <system> alias for another system`;
     return;
   }
-  const isSap = tab?.url && /^https?:/.test(tab.url) && (looksLikeLaunchpad(tab.url) || (await probeLaunchpad(tab.id)).launchpad);
+  let isSap = false;
+  try {
+    isSap = Boolean(tab?.url && /^https?:/.test(tab.url) && (looksLikeLaunchpad(tab.url) || (await probeLaunchpad(tab.id)).launchpad));
+  } catch (e) {
+    console.warn('tab probe failed', e); // not scriptable (chrome://, store, PDF): treat as a plain page
+  }
   if (isSap) {
     $('#current').innerHTML = `SAP launchpad detected: <b>${esc(host)}</b> <button id="add-current" class="small">Add as system</button>`;
     $('#add-current').addEventListener('click', () => addCurrent(snap).catch((e) => { $('#hint').textContent = 'Could not add: ' + (e.message || e); }));
