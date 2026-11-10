@@ -205,7 +205,12 @@ export function systemByTarget(systems, target) {
   const onHost = list.filter((s) => String(s.host).toLowerCase() === t);
   return onHost.find((s) => !clientOf(s)) ?? onHost[0] ?? null;
 }
-/** The system a tab URL belongs to: same host, and the sap-client of the URL when systems on the host differ by client. */
+/**
+ * The system a tab URL belongs to: same host, and the sap-client of the URL. A URL naming a client matches the system
+ * with that client, else a system registered without one (it stands for the whole host); a URL on client 600 is never
+ * the client-400 system, so that tab counts as unregistered and can be added. A URL without a client matches the
+ * client-less system, else the first on the host.
+ */
 export function systemForUrl(systems, url) {
   let u;
   try { u = new URL(String(url ?? '')); } catch { return null; }
@@ -213,7 +218,7 @@ export function systemForUrl(systems, url) {
   const onHost = (systems || []).filter((s) => String(s.host).toLowerCase() === host);
   if (!onHost.length) return null;
   const client = clientInUrl(u);
-  if (client) return onHost.find((s) => clientOf(s) === client) ?? onHost.find((s) => !clientOf(s)) ?? onHost[0];
+  if (client) return onHost.find((s) => clientOf(s) === client) ?? onHost.find((s) => !clientOf(s)) ?? null;
   return onHost.find((s) => !clientOf(s)) ?? onHost[0];
 }
 /** Is this URL on the system's host, and on its client when it has one? (hash navigation keeps the tab) */

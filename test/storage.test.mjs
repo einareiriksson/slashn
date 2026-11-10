@@ -295,7 +295,8 @@ test('targets: a client makes a second system on the same host; tabs and scans a
   assert.equal(systemByTarget([a, b, c], 'acd.example.com'), a, 'a bare host picks the first system on it');
   assert.equal(systemForUrl([a, b, c], 'https://acd.example.com/sap/bc/ui2/flp?sap-client=600#Shell-home'), b);
   assert.equal(systemForUrl([a, b, c], 'https://ACD.example.com/ui'), a, 'no client in the URL: the first system on the host');
-  assert.equal(systemForUrl([a, b, c], 'https://erp.example.com/ui?sap-client=100'), c, 'no system with that client: the host match');
+  assert.equal(systemForUrl([a, b, c], 'https://erp.example.com/ui?sap-client=100'), c, 'a system without a client stands for every client of its host');
+  assert.equal(systemForUrl([a, b, c], 'https://acd.example.com/ui?sap-client=800'), null, 'a client nobody registered on a host of client systems is unregistered, so it can be added');
   assert.equal(systemForUrl([a, b, c], 'https://other.example.com/ui'), null);
   assert.equal(isOnTarget('https://acd.example.com/ui?sap-client=400#X-y', a), true);
   assert.equal(isOnTarget('https://acd.example.com/ui?sap-client=600#X-y', a), false);
