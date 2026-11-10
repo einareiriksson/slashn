@@ -140,7 +140,7 @@ npm test        # node --test, see below
 
 When adding a launchpad flavour, add a row to `FLAVOURS` in `test/urls.test.mjs`; every generated URL, re-parse round trip, tab-reuse check and origin pattern is asserted from that one row.
 
-No build step; plain ES modules. `src/resolver.js`, `src/csv.js`, `src/tcodes.js` have no `chrome.*` references; `src/storage.js` takes injectable storage areas.
+No build step; plain ES modules. `src/resolver.js`, `src/csv.js`, `src/tcodes.js` have no `chrome.*` references; `src/storage.js` takes injectable storage areas. `src/embed.js` wraps them in a synchronous JSON-in/JSON-out API for hosts without `chrome.*` (the [macOS launcher](https://github.com/einareiriksson/slashn-mac) runs it in JavaScriptCore); `package.json` exports the core modules and seed files, and `npm run test:jsc` runs the embedding tests in the bare JavaScriptCore shell.
 
 ## Limitations (v1)
 
