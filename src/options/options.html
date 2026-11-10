@@ -39,6 +39,9 @@
           <input type="text" name="url" id="add-url-input" placeholder="Paste a launchpad URL to add a system…" autocomplete="off" spellcheck="false">
           <button type="submit" class="primary">Add</button>
           <button type="button" class="ghost" data-action="add-system">Add manually</button>
+          <button type="button" class="ghost" data-action="import-systems" title="Add systems from a file a colleague exported (merge: same key or host/client updates, new ones are added)">Import…</button>
+          <button type="button" class="ghost" data-action="export-systems" title="Save the system list as a file to share (no aliases, no scan results)">Export…</button>
+          <input type="file" id="file-systems" accept="application/json,.json" hidden>
         </form>
         <div id="sys-warnings" class="notice warn" hidden></div>
         <div id="systems-list" class="cards"></div>

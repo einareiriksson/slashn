@@ -1,5 +1,5 @@
 // slashn — options page.
-import { createStorage, validateSystems, normalizeSystem, systemFromUrl, systemForUrl, systemByTarget, targetKey, isDefaultHost, originPattern, describeSystemInfo, looksLikeLaunchpad, ENVS, EDITIONS, EDITION_LABELS, ALIAS_RE } from '../storage.js';
+import { createStorage, validateSystems, normalizeSystem, systemFromUrl, systemForUrl, systemByTarget, targetKey, exportSystems, isDefaultHost, originPattern, describeSystemInfo, looksLikeLaunchpad, ENVS, EDITIONS, EDITION_LABELS, ALIAS_RE } from '../storage.js';
 import { mergeEntries, normalizeEntry, homeUrl, splitIntent, entryKey, appliesToEdition } from '../resolver.js';
 import { aliasesFromCsv, aliasesToCsv } from '../csv.js';
 import { MSG } from '../messages.js';
@@ -628,6 +628,23 @@ document.addEventListener('click', async (ev) => {
       case 'clear-selected':
         if (ui.discHost && confirm(`Forget the discovered apps of ${systemByHost(ui.discHost)?.key || ui.discHost}?`)) { await storage.clearDiscovered(ui.discHost); toast('Cleared'); }
         break;
+      case 'export-systems': {
+        download(`slashn-systems-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(exportSystems(snap.systems), null, 2), 'application/json');
+        break;
+      }
+      case 'import-systems': {
+        const f = await readFile($('#file-systems'));
+        if (!f) return;
+        let obj;
+        try { obj = JSON.parse(f.text); } catch { toast(`${f.name} is not JSON`, 4000); return; }
+        try {
+          const r = await storage.importSystems(obj, { replace: false });
+          toast(`Imported from ${f.name}: ${r.added} added, ${r.updated} updated, ${r.total} systems`, 4000);
+        } catch (e) {
+          toast(String(e.message || e), 6000);
+        }
+        break;
+      }
       case 'export-json': {
         const data = await storage.exportJson({ includeDiscovered: $('#include-discovered').checked });
         download(`slashn-config-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2), 'application/json');

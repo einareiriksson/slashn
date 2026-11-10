@@ -172,7 +172,24 @@ test('importConfig: replace and merge like the extension, scan data per host', (
   assert.deepEqual(Object.keys(replaced.discovered), ['new.example.com']);
   assert.deepEqual(replaced.recent, []);
   assert.throws(() => core.importConfig(current, { systems: [] }), /Not a slashn config export/);
+
+  // a systems file touches the system list only
+  const sysFile = { format: 'slashn-systems', systems: [{ key: 'ERP', host: 'erp.example.com', launchpadQuery: 'sap-client=100', name: 'ERP from file' }, { key: 'new', host: 'new.example.com' }] };
+  const only = core.importConfig(current, sysFile, { replace: false });
+  assert.deepEqual(only.systems.map((s) => s.key), ['acd', 'ERP', 'gui', 'new']);
+  assert.equal(only.systems[1].name, 'ERP from file');
+  assert.equal(only.systems[1].gui, undefined, 'the file row replaces the system, as a backup row does');
+  assert.deepEqual(only.userAliases, normalizedCurrentAliases(current), 'aliases untouched');
+  assert.deepEqual(Object.keys(only.discovered), ['erp.example.com/100'], 'scans untouched');
+  assert.equal(only.recent.length, 1);
+  const replacedList = core.importConfig(current, sysFile, { replace: true });
+  assert.deepEqual(replacedList.systems.map((s) => s.key), ['ERP', 'new']);
+  assert.equal(replacedList.systems[0].isDefault, true);
+  assert.equal(replacedList.recent.length, 1, 'replacing the system list keeps everything else');
+  assert.equal(core.exportSystems(only.systems).format, 'slashn-systems');
 });
+
+const normalizedCurrentAliases = (cfg) => core.normalizeConfig(cfg).userAliases;
 
 test('json facade: strings in, strings out, undefined becomes null', () => {
   const out = JSON.parse(core.json.suggest(JSON.stringify('erp se16'), JSON.stringify({ limit: 3 })));

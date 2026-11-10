@@ -633,6 +633,17 @@ export function createStorage(areas = null) {
       return out;
     },
 
+    /** Systems from a systems file or a backup, merged (default) or replacing the list; throws on invalid rows. */
+    async importSystems(obj, { replace = false } = {}) {
+      const incoming = systemsFromImport(obj);
+      const merged = replace ? { systems: incoming.map((s, i) => ({ ...s })), added: incoming.length, updated: 0 } : mergeSystems(await api.getSystems(), incoming);
+      if (replace && merged.systems.length && !merged.systems.some((s) => s.isDefault)) merged.systems[0].isDefault = true;
+      const errors = validateSystems(merged.systems);
+      if (errors.length) throw new Error(errors.join('; '));
+      await api.setSystems(merged.systems);
+      return { ...merged, total: merged.systems.length };
+    },
+
     async importJson(obj, { replace = true } = {}) {
       if (!obj || obj.format !== 'slashn-config') throw new Error('Not a slashn config export');
       const migrated = migrateSnapshot({
@@ -652,6 +663,42 @@ export function createStorage(areas = null) {
     },
   };
   return api;
+}
+
+// ---------------------------------------------------------------- systems files (share a system list without aliases or scans)
+
+export const SYSTEMS_FORMAT = 'slashn-systems';
+
+/** The systems alone, as a file a colleague can import. */
+export function exportSystems(systems) {
+  return { format: SYSTEMS_FORMAT, schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), systems: (systems || []).map(normalizeSystem) };
+}
+
+/** Systems from a systems file, a full backup, or a bare array; throws when the file is neither. */
+export function systemsFromImport(obj) {
+  const list = Array.isArray(obj) ? obj : obj && typeof obj === 'object' && (obj.format === SYSTEMS_FORMAT || obj.format === 'slashn-config') && Array.isArray(obj.systems) ? obj.systems : null;
+  if (!list) throw new Error('Not a slashn systems file (expected "format": "slashn-systems" or a configuration export)');
+  return list.filter((s) => s && typeof s === 'object').map(normalizeSystem);
+}
+
+/**
+ * Merge imported systems into the current list: a row with the same key (any case) or the same target (host/client)
+ * replaces that system, keeping its place and default flag; new rows are appended. The current default stays the
+ * default; without one, the file's default (else the first row) becomes it.
+ */
+export function mergeSystems(current, incoming) {
+  const out = (current || []).map((s) => ({ ...s }));
+  const hadDefault = out.some((s) => s.isDefault);
+  let added = 0, updated = 0;
+  for (const raw of incoming || []) {
+    const s = normalizeSystem(raw);
+    const i = out.findIndex((o) => o.key.toLowerCase() === s.key.toLowerCase() || (targetKey(o) && targetKey(o) === targetKey(s)));
+    if (i >= 0) { out[i] = { ...s, isDefault: out[i].isDefault }; updated++; }
+    else { out.push({ ...s, isDefault: hadDefault ? false : s.isDefault }); added++; }
+  }
+  if (out.length && !out.some((s) => s.isDefault)) out[0].isDefault = true;
+  if (out.filter((s) => s.isDefault).length > 1) { let seen = false; for (const s of out) { if (s.isDefault && seen) s.isDefault = false; if (s.isDefault) seen = true; } }
+  return { systems: out, added, updated };
 }
 
 /** Later items win. */

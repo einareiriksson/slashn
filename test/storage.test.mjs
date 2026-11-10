@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { clientOf, targetKey, systemByTarget, systemForUrl, isOnTarget, systemFromUrl as sysFromUrl } from '../src/storage.js';
+import { clientOf, targetKey, systemByTarget, systemForUrl, isOnTarget, systemFromUrl as sysFromUrl, exportSystems, systemsFromImport, mergeSystems } from '../src/storage.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
@@ -314,4 +314,45 @@ test('targets: a client makes a second system on the same host; tabs and scans a
   assert.deepEqual(migrateSnapshot(m), m, 'idempotent');
   const keep = migrateSnapshot({ sync: { systems: [a, { ...c, host: 'acd.example.com' }] }, local: { discovered: { 'acd.example.com': { scannedAt: 't', entries: [] } } } });
   assert.deepEqual(Object.keys(keep.local.discovered), ['acd.example.com'], 'a client-less system on the host keeps the record');
+});
+
+test('systems files: export, import from either file kind, merge by key or target, defaults', async () => {
+  const acd = normalizeSystem({ key: 'acd', host: 'my1.s4hana.cloud.sap', isDefault: true });
+  const erp = normalizeSystem({ key: 'erp', host: 'erp.example.com', launchpadQuery: 'sap-client=100', name: 'ERP' });
+  const file = exportSystems([acd, erp]);
+  assert.equal(file.format, 'slashn-systems');
+  assert.deepEqual(file.systems, [acd, erp]);
+  assert.deepEqual(systemsFromImport(file), [acd, erp]);
+  assert.deepEqual(systemsFromImport({ format: 'slashn-config', systems: [acd], userAliases: [] }), [acd], 'a full backup works too');
+  assert.deepEqual(systemsFromImport([acd]), [acd], 'a bare array works');
+  assert.throws(() => systemsFromImport({ format: 'other', systems: [] }), /slashn-systems/);
+  assert.throws(() => systemsFromImport({ systems: 'x' }), /slashn-systems/);
+
+  // merge: same key updates (keeps place and default), same target updates, new appends without stealing the default
+  const incoming = [
+    { key: 'ERP', host: 'erp.example.com', launchpadQuery: 'sap-client=100', name: 'ERP renamed', isDefault: true },
+    { key: 'cloud2', host: 'my1.s4hana.cloud.sap', name: 'same target as acd' },
+    { key: 'new', host: 'new.example.com', isDefault: true },
+  ];
+  const m = mergeSystems([acd, erp], incoming);
+  assert.deepEqual(m.systems.map((s) => s.key), ['cloud2', 'ERP', 'new']);
+  assert.equal(m.systems[0].name, 'same target as acd');
+  assert.equal(m.systems[0].isDefault, true, 'the current default row keeps its default flag even when its key changes');
+  assert.equal(m.systems[1].name, 'ERP renamed');
+  assert.equal(m.systems[1].isDefault, false, 'the file\'s default does not override the current one');
+  assert.equal(m.systems[2].isDefault, false);
+  assert.equal(m.added, 1);
+  assert.equal(m.updated, 2);
+  assert.equal(mergeSystems([], [{ key: 'a', host: 'a.example' }, { key: 'b', host: 'b.example', isDefault: true }]).systems.find((s) => s.isDefault).key, 'b', 'no current default: the file\'s default wins');
+  assert.equal(mergeSystems([], [{ key: 'a', host: 'a.example' }]).systems[0].isDefault, true, 'neither has one: the first row');
+
+  const area = memoryArea();
+  const api = createStorage({ sync: area, local: memoryArea(), session: memoryArea() });
+  await api.setSystems([acd, erp]);
+  const r = await api.importSystems(file, { replace: false });
+  assert.deepEqual([r.added, r.updated, r.total], [0, 2, 2]);
+  await assert.rejects(api.importSystems({ format: 'slashn-systems', systems: [{ key: 'a b', host: 'x' }] }), /key may contain/);
+  assert.equal((await api.getSystems()).length, 2, 'nothing written when the merged list is invalid');
+  const rep = await api.importSystems([{ key: 'only', host: 'only.example.com' }], { replace: true });
+  assert.deepEqual([rep.total, (await api.getSystems())[0].isDefault], [1, true]);
 });

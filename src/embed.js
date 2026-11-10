@@ -8,10 +8,10 @@ import {
 } from './resolver.js';
 import { makeGuesser } from './tcodes.js';
 import {
-  buildSeedEntries, migrateSnapshot, normalizeSystem, validateSystems, systemFromParts, sanitizeSettings, targetKey, KEYS, RECENT_LIMIT, SCHEMA_VERSION,
+  buildSeedEntries, migrateSnapshot, normalizeSystem, validateSystems, systemFromParts, sanitizeSettings, targetKey, mergeSystems, systemsFromImport, exportSystems, SYSTEMS_FORMAT, KEYS, RECENT_LIMIT, SCHEMA_VERSION,
 } from './storage.js';
 
-export const CORE_VERSION = '1.2.0'; // kept equal to package.json by test/embed.test.mjs
+export const CORE_VERSION = '1.2.1'; // kept equal to package.json by test/embed.test.mjs
 
 const guesser = makeGuesser();
 const SOURCE_FILTERS = Object.freeze({ mine: ['user', 'import'], discovered: ['discovered'], seed: ['seed'], library: ['library'] });
@@ -225,7 +225,7 @@ export function recordLaunch(launch) {
   return { recent: cfg.recent, lastUsedSystemKey: cfg.lastUsedSystemKey };
 }
 
-export { normalizeSystem, validateSystems, systemFromParts };
+export { normalizeSystem, validateSystems, systemFromParts, exportSystems, systemsFromImport, mergeSystems };
 
 /**
  * Merge an extension export (or another config file) into the current configuration, as the extension's importJson does:
@@ -233,8 +233,15 @@ export { normalizeSystem, validateSystems, systemFromParts };
  * host from the incoming file in both modes. Throws on anything that is not a slashn-config export.
  */
 export function importConfig(current, incoming, { replace = true } = {}) {
-  if (!incoming || incoming.format !== 'slashn-config') throw new Error('Not a slashn config export');
   const cur = normalizeConfig(current);
+  if (incoming && incoming.format === SYSTEMS_FORMAT) {
+    // a systems file touches the system list only; "replace" replaces that list, nothing else
+    const list = systemsFromImport(incoming);
+    const systems = replace ? list : mergeSystems(cur.systems, list).systems;
+    if (replace && systems.length && !systems.some((s) => s.isDefault)) systems[0].isDefault = true;
+    return normalizeConfig({ ...cur, systems });
+  }
+  if (!incoming || incoming.format !== 'slashn-config') throw new Error('Not a slashn config export');
   const inc = normalizeConfig(incoming);
   const mergeBy = (items, keyFn) => { const m = new Map(); for (const it of items) m.set(keyFn(it), it); return [...m.values()]; };
   return normalizeConfig({
@@ -251,7 +258,7 @@ export function importConfig(current, incoming, { replace = true } = {}) {
 
 // ---------------------------------------------------------------- JSON facade
 
-const api = { init, setConfig, getConfig, reset, version, suggest, resolve, recordLaunch, normalizeSystem, validateSystems, systemFromParts, normalizeConfig, importConfig };
+const api = { init, setConfig, getConfig, reset, version, suggest, resolve, recordLaunch, normalizeSystem, validateSystems, systemFromParts, normalizeConfig, importConfig, exportSystems };
 
 const parseArg = (a) => (typeof a === 'string' ? JSON.parse(a) : a);
 
