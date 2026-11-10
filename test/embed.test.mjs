@@ -77,6 +77,10 @@ test('suggest: user aliases, systems list, home hint on a classic-only system', 
   const home = core.suggest('gui');
   assert.equal(home.kind, 'home');
   assert.match(home.hint, /Open SAP GUI logon \[gui · SAP GUI\]/);
+  assert.equal(home.url, null, 'no launchpad, no home URL');
+  assert.equal(core.suggest('erp').url, 'https://erp.example.com/ui?sap-client=100#Shell-home');
+  assert.equal(core.suggest('').url, 'https://my1.s4hana.cloud.sap/ui#Shell-home', 'empty line: the default system\'s home');
+  assert.equal(core.suggest('').kind, 'empty');
 });
 
 test('resolve: home, open, app finder, classic-only', () => {

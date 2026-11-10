@@ -11,7 +11,7 @@ import {
   buildSeedEntries, migrateSnapshot, normalizeSystem, validateSystems, systemFromParts, sanitizeSettings, KEYS, RECENT_LIMIT, SCHEMA_VERSION,
 } from './storage.js';
 
-export const CORE_VERSION = '1.1.0'; // kept equal to package.json by test/embed.test.mjs
+export const CORE_VERSION = '1.1.1'; // kept equal to package.json by test/embed.test.mjs
 
 const guesser = makeGuesser();
 const SOURCE_FILTERS = Object.freeze({ mine: ['user', 'import'], discovered: ['discovered'], seed: ['seed'], library: ['library'] });
@@ -164,7 +164,11 @@ export function suggest(text, { limit = 8, preferredKey = null, availableOnly = 
       matches: cfg.systems.map((s) => ({ content: s.key, alias: s.key, title: s.name || s.host || s.key, intent: '', systemKey: s.key, tag: [s.env, s.host || 'SAP GUI'].join(' · ') })),
     };
   }
-  if (!system || parsed.kind !== 'query') return { kind: parsed.kind, system, hint: plainText(formatDefaultDescription(parsed)), matches: [] };
+  if (!system || parsed.kind !== 'query') {
+    // Enter on an empty line or a bare key opens the launchpad home: hand the URL over so the host can show and use it
+    const url = parsed.system && parsed.system.launchpad !== false ? homeUrl(parsed.system) : null;
+    return { kind: parsed.kind, system, hint: plainText(formatDefaultDescription(parsed)), matches: [], url };
+  }
   const scannedAt = parsed.system.host ? cfg.scanMeta?.[parsed.system.host]?.lastScanned || null : null;
   const filtered = Boolean(availableOnly && scannedAt);
   const sources = SOURCE_FILTERS[source] || null;
