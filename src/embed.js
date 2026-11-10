@@ -8,10 +8,10 @@ import {
 } from './resolver.js';
 import { makeGuesser } from './tcodes.js';
 import {
-  buildSeedEntries, migrateSnapshot, normalizeSystem, validateSystems, systemFromParts, sanitizeSettings, KEYS, RECENT_LIMIT, SCHEMA_VERSION,
+  buildSeedEntries, migrateSnapshot, normalizeSystem, validateSystems, systemFromParts, sanitizeSettings, targetKey, KEYS, RECENT_LIMIT, SCHEMA_VERSION,
 } from './storage.js';
 
-export const CORE_VERSION = '1.1.2'; // kept equal to package.json by test/embed.test.mjs
+export const CORE_VERSION = '1.2.0'; // kept equal to package.json by test/embed.test.mjs
 
 const guesser = makeGuesser();
 const SOURCE_FILTERS = Object.freeze({ mine: ['user', 'import'], discovered: ['discovered'], seed: ['seed'], library: ['library'] });
@@ -89,7 +89,7 @@ function indexFor(system) {
       user: cfg.userAliases,
       seed: state.seed,
       hidden: cfg.hiddenAliases,
-      discovered: system.host ? cfg.discovered?.[system.host]?.entries || [] : [],
+      discovered: system.host ? cfg.discovered?.[targetKey(system)]?.entries || [] : [],
       edition: system.edition || null,
     });
     state.index.set(system.key, buildIndex(entries));
@@ -99,7 +99,7 @@ function indexFor(system) {
 
 /** Classic transactions are offered off Public Cloud, and always where the host can open SAP GUI itself. */
 function guiFor(system) {
-  const entries = system.host ? state.config.discovered?.[system.host]?.entries || [] : [];
+  const entries = system.host ? state.config.discovered?.[targetKey(system)]?.entries || [] : [];
   let available = entries.length ? entries.some((e) => /^shell-startgui$/i.test(String(e.intent || ''))) : null;
   if (system.gui && available === false) available = null; // the WebGUI runtime may be missing; SAP GUI for Java is not
   return { enabled: (system.edition || 'onprem') !== 'public' || Boolean(system.gui), available };
@@ -110,7 +110,7 @@ function recentIntentsFor(system) {
 }
 
 const systemSummary = (s) => (s ? {
-  key: s.key, name: s.name, host: s.host, env: s.env, edition: s.edition, isDefault: Boolean(s.isDefault),
+  key: s.key, name: s.name, host: s.host, target: targetKey(s), env: s.env, edition: s.edition, isDefault: Boolean(s.isDefault),
   launchpad: s.launchpad !== false, gui: Boolean(s.gui), browserBundleId: s.browserBundleId || null,
 } : null);
 
@@ -169,7 +169,7 @@ export function suggest(text, { limit = 8, preferredKey = null, availableOnly = 
     const url = parsed.system && parsed.system.launchpad !== false ? homeUrl(parsed.system) : null;
     return { kind: parsed.kind, system, hint: plainText(formatDefaultDescription(parsed)), matches: [], url };
   }
-  const scannedAt = parsed.system.host ? cfg.scanMeta?.[parsed.system.host]?.lastScanned || null : null;
+  const scannedAt = parsed.system.host ? cfg.scanMeta?.[targetKey(parsed.system)]?.lastScanned || null : null;
   const filtered = Boolean(availableOnly && scannedAt);
   const sources = SOURCE_FILTERS[source] || null;
   const matches = rank(parsed, indexFor(parsed.system), { limit, guesser, gui: guiFor(parsed.system), availableOnly: filtered, sources, recentIntents: recentIntentsFor(parsed.system) });

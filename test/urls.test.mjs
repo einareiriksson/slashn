@@ -226,12 +226,12 @@ test('originPattern: scheme and port are part of the pattern', () => {
 
 test('systemFromUrl: key, customer and uniqueness for on-prem hosts', () => {
   const a = systemFromUrl('https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600', []);
-  assert.equal(a.key, 'acd', 'port never leaks into the key');
+  assert.equal(a.key, 'acd600', 'the client joins the key, the port never does');
   assert.equal(a.customer, 'finteq');
-  assert.equal(a.name, 'acd.finteq.io:8443');
+  assert.equal(a.name, 'acd.finteq.io:8443 (client 600)');
   assert.equal(a.isDefault, true);
   const b = systemFromUrl('https://acd.finteq.io/sap/bc/ui2/flp?sap-client=100', [a]);
-  assert.equal(b.key, 'acd2', 'same hostname on another port is a second system with a unique key');
+  assert.equal(b.key, 'acd100', 'same hostname on another port and client is a second system with its own key');
   assert.equal(b.host, 'acd.finteq.io');
   assert.equal(b.isDefault, false);
   assert.equal(systemFromUrl('https://10.0.0.5:8443/sap/bc/ui2/flp', []).key, '10');

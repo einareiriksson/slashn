@@ -1,6 +1,6 @@
 // slashn — toolbar popup. Same launcher as the omnibox, driven through the service worker.
 import { MSG } from '../messages.js';
-import { createStorage, systemFromUrl, looksLikeLaunchpad, isDefaultHost, originPattern, editionFromSystemInfo } from '../storage.js';
+import { createStorage, systemFromUrl, systemForUrl, targetKey, looksLikeLaunchpad, isDefaultHost, originPattern, editionFromSystemInfo } from '../storage.js';
 import { probeTab } from '../probe.js';
 
 const storage = createStorage();
@@ -127,10 +127,8 @@ async function init() {
 
 async function describeTab(snap) {
   const input = $('#q');
-  let host = '';
-  try { host = tab?.url ? new URL(tab.url).host.toLowerCase() : ''; } catch { host = ''; }
-  const current = snap.systems.find((s) => s.host === host);
-  contextHost = current ? current.host : null;
+  const current = systemForUrl(snap.systems, tab?.url); // host and, where systems differ by client, the URL's sap-client
+  contextHost = current ? targetKey(current) : null;
   contextKey = current ? current.key : null;
   const info = $('#sysinfo');
   info.hidden = !current;
@@ -154,7 +152,7 @@ async function describeTab(snap) {
       // no display name: one line – the system key as primary (it is what you type), the host dim after it
       header.innerHTML = `<div class="sysname">${esc(current.key)}${pill} <span class="syshost inline">${esc(current.host)}</span></div>`;
     }
-    const openInfo = async () => { await send({ type: MSG.OPEN_SYSTEM_INFO, host: current.host }); closeSelf(); };
+    const openInfo = async () => { await send({ type: MSG.OPEN_SYSTEM_INFO, host: targetKey(current) }); closeSelf(); };
     info.onclick = openInfo;
     header.onclick = openInfo; // the header is the system: clicking it opens the system-info panel too
     input.placeholder = `alias [value] – or <system> alias for another system`;
@@ -211,7 +209,7 @@ function askScan(sys) {
   hint.innerHTML = `Added <b>${esc(sys.key)}</b>. Scan its apps now? <button id="scan-now" class="small">Scan now</button> <button id="scan-later" class="small">Later</button>`;
   $('#scan-now').addEventListener('click', async () => {
     hintHold = false;
-    const r = await send({ type: MSG.RESCAN_HOST, host: sys.host, reopenLauncher: true, contextTabId: tab?.id ?? null }); // this tab is scanned; the launcher comes back when the scan has landed
+    const r = await send({ type: MSG.RESCAN_HOST, host: targetKey(sys), reopenLauncher: true, contextTabId: tab?.id ?? null }); // this tab is scanned; the launcher comes back when the scan has landed
     hint.textContent = r?.status === 'messaged' ? 'Scanning…' : r?.status === 'reloaded' || r?.status === 'opened' ? 'Launchpad reloading – scanning when it loads, then the launcher reopens' : (r?.error || 'Scan failed');
   });
   $('#scan-later').addEventListener('click', () => { hintHold = false; hint.textContent = `Added "${sys.key}"; the first launchpad load scans it (or use Rescan in options)`; });
@@ -230,7 +228,7 @@ async function resolve(text) {
   pendingForce = null;
   // The "Open <code> <title> [system · host]" line only earns its place when Enter does something non-obvious: the
   // launch targets another system than the tab (so it opens there, in a new tab) – or when it carries a notice.
-  const elsewhere = Boolean(r.system?.host) && r.system.host !== contextHost;
+  const elsewhere = Boolean(r.system?.host) && (r.system.target || r.system.host) !== contextHost;
   const show = r.hintKind === 'notice' || (r.kind === 'query' && elsewhere) || (r.kind !== 'query' && text.trim() && elsewhere);
   if (!hintHold) $('#hint').textContent = show && text.trim() ? (r.hint || '') : '';
   renderList();
@@ -242,7 +240,7 @@ async function liveCheck(r) {
   const mySeq = ++liveSeq;
   if (!r.system?.host || !items.length) return;
   const intents = [...new Set(items.map((m) => m.intent).filter(Boolean))];
-  const live = await send({ type: MSG.LIVE_CHECK, host: r.system.host, intents });
+  const live = await send({ type: MSG.LIVE_CHECK, host: r.system.target || r.system.host, intents });
   if (mySeq !== liveSeq || !live?.available) return;
   for (const m of items) if (m.intent in live.available) m.live = live.available[m.intent];
   renderList();

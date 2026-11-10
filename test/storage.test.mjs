@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { clientOf, targetKey, systemByTarget, systemForUrl, isOnTarget, systemFromUrl as sysFromUrl } from '../src/storage.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
@@ -139,7 +140,7 @@ test('systemFromUrl builds a row from a pasted URL', () => {
   assert.equal(systemFromUrl('https://acd.finteq.io', [{ key: 'acd' }, { key: 'acd2' }]).key, 'acd3');
   const op = systemFromUrl('https://acd.finteq.io:8443/sap/bc/ui2/flp?sap-client=600#Shell-home', []);
   assert.equal(op.host, 'acd.finteq.io:8443');
-  assert.equal(op.key, 'acd');
+  assert.equal(op.key, 'acd600', 'the client joins the key');
   assert.equal(op.customer, 'finteq');
   assert.equal(op.launchpadPath, '/sap/bc/ui2/flp');
   assert.equal(op.launchpadQuery, 'sap-client=600');
@@ -280,4 +281,37 @@ test('import hardening: settings, discovered records and scan metadata from a ba
   await st.importJson({ format: 'slashn-config', systems: [{ key: 'acd', host: 'my1.s4hana.cloud.sap', isDefault: true }], settings: { suggestionLimit: '7', weird: true }, discovered: { 'my1.s4hana.cloud.sap': { entries: [{ intent: 'PurchaseOrder-manage', title: 'Manage POs' }, { intent: 'bad intent' }] } } });
   assert.deepEqual(await st.getSettings(), { ...DEFAULT_SETTINGS, suggestionLimit: 7 });
   assert.equal((await st.getDiscovered())['my1.s4hana.cloud.sap'].entries.length, 1);
+});
+
+test('targets: a client makes a second system on the same host; tabs and scans are told apart by sap-client', () => {
+  const a = normalizeSystem({ key: 'acd400', host: 'acd.example.com', launchpadQuery: 'sap-client=400' });
+  const b = normalizeSystem({ key: 'acd600', host: 'acd.example.com', launchpadQuery: 'sap-client=600' });
+  const c = normalizeSystem({ key: 'erp', host: 'erp.example.com' });
+  assert.equal(clientOf(a), '400');
+  assert.equal(clientOf(c), null);
+  assert.equal(targetKey(a), 'acd.example.com/400');
+  assert.equal(targetKey(c), 'erp.example.com');
+  assert.equal(systemByTarget([a, b, c], 'acd.example.com/600'), b);
+  assert.equal(systemByTarget([a, b, c], 'acd.example.com'), a, 'a bare host picks the first system on it');
+  assert.equal(systemForUrl([a, b, c], 'https://acd.example.com/sap/bc/ui2/flp?sap-client=600#Shell-home'), b);
+  assert.equal(systemForUrl([a, b, c], 'https://ACD.example.com/ui'), a, 'no client in the URL: the first system on the host');
+  assert.equal(systemForUrl([a, b, c], 'https://erp.example.com/ui?sap-client=100'), c, 'no system with that client: the host match');
+  assert.equal(systemForUrl([a, b, c], 'https://other.example.com/ui'), null);
+  assert.equal(isOnTarget('https://acd.example.com/ui?sap-client=400#X-y', a), true);
+  assert.equal(isOnTarget('https://acd.example.com/ui?sap-client=600#X-y', a), false);
+  assert.equal(isOnTarget('https://acd.example.com/ui', a), false, 'a system with a client needs the client in the URL');
+  assert.equal(isOnTarget('https://erp.example.com/ui?sap-client=100', c), true);
+  assert.deepEqual(validateSystems([{ ...a, isDefault: true }, b]), [], 'the same host twice is allowed');
+  const s = sysFromUrl('https://acd.example.com/sap/bc/ui2/flp?sap-client=600#Shell-home', [a]);
+  assert.equal(s.key, 'acd600');
+  assert.equal(s.name, 'acd.example.com (client 600)');
+  assert.equal(sysFromUrl('https://acd.example.com/sap/bc/ui2/flp?sap-client=400', [a]).key, 'acd4002', 'taken: numbered');
+  assert.equal(sysFromUrl('https://acd.example.com/ui', [a]).key, 'acd', 'no client, plain key');
+  // v1 → v2: a scan stored under the bare host moves to the client target
+  const m = migrateSnapshot({ sync: { systems: [a] }, local: { discovered: { 'acd.example.com': { scannedAt: 't', entries: [] } }, scanMeta: { 'acd.example.com': { lastScanned: 't', appCount: 0 } } } });
+  assert.deepEqual(Object.keys(m.local.discovered), ['acd.example.com/400']);
+  assert.deepEqual(Object.keys(m.local.scanMeta), ['acd.example.com/400']);
+  assert.deepEqual(migrateSnapshot(m), m, 'idempotent');
+  const keep = migrateSnapshot({ sync: { systems: [a, { ...c, host: 'acd.example.com' }] }, local: { discovered: { 'acd.example.com': { scannedAt: 't', entries: [] } } } });
+  assert.deepEqual(Object.keys(keep.local.discovered), ['acd.example.com'], 'a client-less system on the host keeps the record');
 });

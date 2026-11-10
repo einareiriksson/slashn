@@ -3,6 +3,7 @@
 import { MSG } from '../messages.js';
 import { systemInfoRows } from '../probe.js';
 import { homeUrl } from '../resolver.js';
+import { systemByTarget } from '../storage.js';
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
@@ -24,7 +25,7 @@ function notice(text, kind = '') {
 async function load() {
   const state = await send({ type: MSG.GET_STATE });
   const snap = state?.snapshot;
-  system = snap?.systems?.find((s) => s.host === host) || null;
+  system = systemByTarget(snap?.systems || [], host); // host is a target: host, or host/client
   meta = snap?.scanMeta?.[host] || null;
   render();
 }

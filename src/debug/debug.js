@@ -1,6 +1,7 @@
 // slashn — shell debug window. Pick a system and a call; the service worker runs it in an open launchpad tab.
 import { MSG } from '../messages.js';
 import { DEBUG_CALLS, debugCallById, parseDebugParams } from '../debug.js';
+import { systemByTarget, targetKey } from '../storage.js';
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]));
@@ -41,7 +42,7 @@ function renderResults() {
 async function runOne(callId, params) {
   const call = debugCallById(callId);
   const host = $('#system').value;
-  const system = systems.find((s) => s.host === host);
+  const system = systemByTarget(systems, host);
   if (!call || !system) return;
   $('#status').textContent = `Running ${call.label} on ${system.key}…`;
   const r = await send({ type: MSG.DEBUG_CALL, host, call: call.id, params });
@@ -61,7 +62,7 @@ async function init() {
   const state = await send({ type: MSG.GET_STATE });
   systems = state?.snapshot?.systems || [];
   const wanted = new URLSearchParams(location.search).get('host') || '';
-  $('#system').innerHTML = systems.map((s) => `<option value="${esc(s.host)}" ${s.host === wanted || (!wanted && s.isDefault) ? 'selected' : ''}>${esc(s.key)} – ${esc(s.host)}</option>`).join('') || '<option value="">no systems</option>';
+  $('#system').innerHTML = systems.map((s) => `<option value="${esc(targetKey(s))}" ${targetKey(s) === wanted || (!wanted && s.isDefault) ? 'selected' : ''}>${esc(s.key)} – ${esc(targetKey(s))}</option>`).join('') || '<option value="">no systems</option>';
   fillCalls();
   let remembered = '';
   try { remembered = localStorage.getItem('slashn-debug-call') || ''; } catch { remembered = ''; }

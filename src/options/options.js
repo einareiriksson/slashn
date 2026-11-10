@@ -1,5 +1,5 @@
 // slashn — options page.
-import { createStorage, validateSystems, normalizeSystem, systemFromUrl, isDefaultHost, originPattern, describeSystemInfo, looksLikeLaunchpad, ENVS, EDITIONS, EDITION_LABELS, ALIAS_RE } from '../storage.js';
+import { createStorage, validateSystems, normalizeSystem, systemFromUrl, systemForUrl, systemByTarget, targetKey, isDefaultHost, originPattern, describeSystemInfo, looksLikeLaunchpad, ENVS, EDITIONS, EDITION_LABELS, ALIAS_RE } from '../storage.js';
 import { mergeEntries, normalizeEntry, homeUrl, splitIntent, entryKey, appliesToEdition } from '../resolver.js';
 import { aliasesFromCsv, aliasesToCsv } from '../csv.js';
 import { MSG } from '../messages.js';
@@ -83,8 +83,9 @@ const fmtDateTime = (v) => { try { return new Date(v).toLocaleString(undefined, 
 const srcLabel = (e) => ({ user: 'mine', import: 'imported', seed: 'built-in', library: 'library', discovered: 'discovered' }[e.source] || e.source);
 
 const staticEntries = () => mergeEntries({ user: snap.userAliases, seed: [...snap.seedAliases, ...snap.importedAliases], hidden: snap.hiddenAliases });
-const entriesForHost = (host) => mergeEntries({ user: snap.userAliases, seed: [...snap.seedAliases, ...snap.importedAliases], hidden: snap.hiddenAliases, discovered: snap.discovered?.[host]?.entries || [], edition: snap.systems.find((s) => s.host === host)?.edition || null });
-const systemByHost = (host) => snap.systems.find((s) => s.host === host) || null;
+const entriesForHost = (host) => mergeEntries({ user: snap.userAliases, seed: [...snap.seedAliases, ...snap.importedAliases], hidden: snap.hiddenAliases, discovered: snap.discovered?.[host]?.entries || [], edition: systemByHost(host)?.edition || null });
+// `host` throughout this page is a target: the host, or host/client for a system whose launchpad query names a sap-client
+const systemByHost = (target) => systemByTarget(snap.systems, target);
 
 // ---------------------------------------------------------------- data mutations
 
@@ -122,7 +123,7 @@ async function refreshAccess() {
   ui.access = {};
   if (!chrome.permissions?.contains) return;
   await Promise.all(snap.systems.filter((s) => !isDefaultHost(s.host)).map(async (s) => {
-    try { ui.access[s.host] = await chrome.permissions.contains({ origins: [originPattern(s)] }); } catch { ui.access[s.host] = false; }
+    try { ui.access[targetKey(s)] = await chrome.permissions.contains({ origins: [originPattern(s)] }); } catch { ui.access[targetKey(s)] = false; }
   }));
 }
 
@@ -135,8 +136,8 @@ function requestAccess(system) {
 async function addFromUrl(text) {
   const sys = systemFromUrl(text, snap.systems);
   if (!sys) { toast('That does not look like a launchpad URL'); return; }
-  const dup = systemByHost(sys.host);
-  if (dup) { toast(`${sys.host} is already registered as "${dup.key}"`); return; }
+  const dup = snap.systems.find((s) => targetKey(s) === targetKey(sys)); // the same host on another client is a new system
+  if (dup) { toast(`${targetKey(sys)} is already registered as "${dup.key}"`); return; }
   const access = requestAccess(sys); // started inside the gesture
   await storage.setSystems([...snap.systems, sys]);
   const granted = await access;
@@ -149,7 +150,7 @@ async function addFromUrl(text) {
 async function refresh() {
   snap = await storage.loadSnapshot();
   await refreshAccess();
-  if (!ui.discHost || !systemByHost(ui.discHost)) ui.discHost = snap.systems[0]?.host ?? null;
+  if (!ui.discHost || !systemByHost(ui.discHost)) ui.discHost = snap.systems[0] ? targetKey(snap.systems[0]) : null;
   render();
 }
 
@@ -174,7 +175,7 @@ async function sapTabs() {
     if (!t.url || !/^https?:/i.test(t.url)) continue;
     let host = '';
     try { host = new URL(t.url).host.toLowerCase(); } catch { continue; }
-    const system = systemByHost(host);
+    const system = systemForUrl(snap.systems, t.url);
     if (!system && !looksLikeLaunchpad(t.url)) continue;
     let intent = '';
     try { intent = decodeURIComponent(new URL(t.url).hash.replace(/^#/, '')); } catch { intent = new URL(t.url).hash.replace(/^#/, ''); }
@@ -232,7 +233,7 @@ function keyCollisionWarnings(systems) {
 function systemForm(s, isNew) {
   const v = ui.sysDraft || s;
   const opt = (list, cur, labels) => list.map((x) => `<option value="${esc(x)}" ${x === cur ? 'selected' : ''}>${esc(labels ? labels[x] : x)}</option>`).join('');
-  return `<form class="form editor" data-sys-form="${esc(isNew ? NEW : s.host)}">
+  return `<form class="form editor" data-sys-form="${esc(isNew ? NEW : targetKey(s))}">
     <div class="fields">
       <label>Key <input name="key" value="${esc(v.key)}" placeholder="acd" autocomplete="off" required pattern="[A-Za-z0-9][A-Za-z0-9_\\-]*" title="Letters, digits, _ or - and no spaces: what you type before the alias, as in “s acd me23n” (any case works when typing)"></label>
       <label class="wide">Name <input name="name" value="${esc(v.name)}" placeholder="Customer A – Development"></label>
@@ -251,36 +252,36 @@ function systemForm(s, isNew) {
       <button type="submit" class="primary">Save</button>
       <button type="button" class="ghost" data-action="cancel-system">Cancel</button>
       <span class="spacer"></span>
-      ${isNew ? '' : `<button type="button" class="ghost danger" data-action="delete-system" data-host="${esc(s.host)}">Delete system</button>`}
+      ${isNew ? '' : `<button type="button" class="ghost danger" data-action="delete-system" data-host="${esc(targetKey(s))}">Delete system</button>`}
     </div>
   </form>`;
 }
 
 function systemCard(s) {
-  const meta = snap.scanMeta?.[s.host];
-  const editing = ui.editHost === s.host;
+  const meta = snap.scanMeta?.[targetKey(s)];
+  const editing = ui.editHost === targetKey(s);
   const custom = !isDefaultHost(s.host);
-  const noAccess = custom && ui.access[s.host] === false;
-  const status = ui.rescanStatus[s.host];
+  const noAccess = custom && ui.access[targetKey(s)] === false;
+  const status = ui.rescanStatus[targetKey(s)];
   const product = describeSystemInfo(meta?.system);
   const roles = [meta?.system?.systemRole, meta?.system?.tenantRole].filter(Boolean).join(' · ');
   const detected = meta?.detectedEdition;
   const editionNote = detected && ((detected === 'public') !== (s.edition === 'public'))
     ? ` <span class="badge warn" title="The launchpad's About dialog reports: ${esc(product || 'unknown product')}">scan says ${detected === 'public' ? 'Public Cloud' : 'not Public Cloud'}</span>` : '';
   const scan = status ? `<span>${esc(status)}</span>`
-    : meta?.lastScanned ? `<span title="${esc(fmtDateTime(meta.lastScanned))}">Scanned ${esc(ago(meta.lastScanned))} · ${esc(meta.appCount)} apps</span> <button class="linkbtn" data-action="view-discovered" data-host="${esc(s.host)}">View</button>`
+    : meta?.lastScanned ? `<span title="${esc(fmtDateTime(meta.lastScanned))}">Scanned ${esc(ago(meta.lastScanned))} · ${esc(meta.appCount)} apps</span> <button class="linkbtn" data-action="view-discovered" data-host="${esc(targetKey(s))}">View</button>`
     : '<span>Not scanned yet</span>';
-  return `<article class="card sys env-${esc(s.env)}" data-host="${esc(s.host)}">
+  return `<article class="card sys env-${esc(s.env)}" data-host="${esc(targetKey(s))}">
     <div class="card-head">
       <span class="key">${esc(s.key)}</span>
       <span class="name">${esc(s.name || '')}</span>
       <span class="badge ${esc(s.env)}">${esc(s.env)}</span>
       ${s.isDefault ? '<span class="badge outline">default</span>' : ''}
       <span class="actions">
-        <button class="sm" data-action="open-launchpad" data-host="${esc(s.host)}">Open</button>
-        <button class="sm" data-action="system-info" data-host="${esc(s.host)}" title="Product version, system name, roles and client as the launchpad's About dialog reports them">Info</button>
-        <button class="sm" data-action="rescan" data-host="${esc(s.host)}">Rescan</button>
-        <button class="sm ${editing ? 'primary' : ''}" data-action="edit-system" data-host="${esc(s.host)}">Edit</button>
+        <button class="sm" data-action="open-launchpad" data-host="${esc(targetKey(s))}">Open</button>
+        <button class="sm" data-action="system-info" data-host="${esc(targetKey(s))}" title="Product version, system name, roles and client as the launchpad's About dialog reports them">Info</button>
+        <button class="sm" data-action="rescan" data-host="${esc(targetKey(s))}">Rescan</button>
+        <button class="sm ${editing ? 'primary' : ''}" data-action="edit-system" data-host="${esc(targetKey(s))}">Edit</button>
       </span>
     </div>
     <div class="card-meta">
@@ -289,8 +290,8 @@ function systemCard(s) {
       ${product ? `<span title="From the launchpad's About dialog${roles ? ' · ' + esc(roles) : ''}">${esc(product)}</span>` : ''}
       ${scan}
     </div>
-    ${noAccess ? `<div class="notice warn inline"><span>slashn has no access to this site yet, so it cannot discover apps or reuse its tabs.</span><button class="sm" data-action="grant-access" data-host="${esc(s.host)}">Grant site access</button></div>` : ''}
-    ${ui.askScan === s.host && !noAccess && !status ? `<div class="notice info inline"><span>Scan <b>${esc(s.key)}</b> now? slashn opens its launchpad and reads the apps your user can reach, so suggestions know what exists there.</span><button class="sm primary" data-action="rescan" data-host="${esc(s.host)}">Scan now</button><button class="sm ghost" data-action="dismiss-scan">Not now</button></div>` : ''}
+    ${noAccess ? `<div class="notice warn inline"><span>slashn has no access to this site yet, so it cannot discover apps or reuse its tabs.</span><button class="sm" data-action="grant-access" data-host="${esc(targetKey(s))}">Grant site access</button></div>` : ''}
+    ${ui.askScan === targetKey(s) && !noAccess && !status ? `<div class="notice info inline"><span>Scan <b>${esc(s.key)}</b> now? slashn opens its launchpad and reads the apps your user can reach, so suggestions know what exists there.</span><button class="sm primary" data-action="rescan" data-host="${esc(targetKey(s))}">Scan now</button><button class="sm ghost" data-action="dismiss-scan">Not now</button></div>` : ''}
     ${editing ? systemForm(s, false) : ''}
   </article>`;
 }
@@ -314,7 +315,7 @@ async function saveSystem(form) {
   const which = form.dataset.sysForm;
   const draft = normalizeSystem(readSystemForm(form));
   const systems = snap.systems.map((s) => ({ ...s }));
-  const idx = which === NEW ? -1 : systems.findIndex((s) => s.host === which);
+  const idx = which === NEW ? -1 : systems.findIndex((s) => targetKey(s) === which);
   if (idx < 0) systems.push(draft); else systems[idx] = draft;
   if (draft.isDefault) systems.forEach((s) => { s.isDefault = s === draft; });
   if (!systems.some((s) => s.isDefault)) systems[0].isDefault = true;
@@ -322,14 +323,14 @@ async function saveSystem(form) {
   ui.sysDraft = draft;
   ui.sysErrors = errors;
   if (errors.length) { renderSystems(); return; }
-  const oldHost = idx >= 0 ? snap.systems[idx].host : null;
-  const hostChanged = draft.host !== oldHost;
+  const oldHost = idx >= 0 ? targetKey(snap.systems[idx]) : null; // a target: host, or host/client
+  const hostChanged = targetKey(draft) !== oldHost;
   // Ask for site access only for a new or changed custom host, and start the request inside the submit gesture.
   const access = hostChanged && !isDefaultHost(draft.host) ? requestAccess(draft) : Promise.resolve(true);
   await storage.setSystems(systems);
   if (oldHost && hostChanged) await storage.clearDiscovered(oldHost);
   ui.editHost = null; ui.sysDraft = null; ui.sysErrors = [];
-  if (which === NEW) ui.askScan = draft.host; // first add: offer a scan right away
+  if (which === NEW) ui.askScan = targetKey(draft); // first add: offer a scan right away
   snap.systems = systems;
   renderSystems(); // do not wait for the storage event: a pending permission prompt can delay it
   const granted = await access;
@@ -465,7 +466,7 @@ async function pinEntry(base, suggested) {
 // ---- discovered
 
 function renderDiscovered() {
-  $('#disc-host').innerHTML = snap.systems.map((s) => `<button type="button" data-value="${esc(s.host)}" class="${s.host === ui.discHost ? 'active' : ''}">${esc(s.key)}</button>`).join('') || '<button type="button" disabled>no systems</button>';
+  $('#disc-host').innerHTML = snap.systems.map((s) => `<button type="button" data-value="${esc(targetKey(s))}" class="${targetKey(s) === ui.discHost ? 'active' : ''}">${esc(s.key)}</button>`).join('') || '<button type="button" disabled>no systems</button>';
   const host = ui.discHost;
   const rec = host ? snap.discovered?.[host] : null;
   const sys = systemByHost(host);
@@ -593,7 +594,7 @@ document.addEventListener('click', async (ev) => {
         break;
       }
       case 'open-debug': {
-        const r = await chrome.runtime.sendMessage({ type: MSG.OPEN_DEBUG, host: snap.systems.find((s) => s.isDefault)?.host || snap.systems[0]?.host || '' });
+        const r = await chrome.runtime.sendMessage({ type: MSG.OPEN_DEBUG, host: targetKey(snap.systems.find((s) => s.isDefault) || snap.systems[0] || {}) });
         if (r?.error) toast(r.error);
         break;
       }

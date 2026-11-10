@@ -55,7 +55,7 @@ const launch = JSON.parse(core.json.recordLaunch(JSON.stringify({ systemKey: 'er
 ok(launch.lastUsedSystemKey === 'erp' && launch.recent.length === 1, 'recordLaunch');
 
 const parts = JSON.parse(core.json.systemFromParts(JSON.stringify({ host: 'Acd.Finteq.io:8443', launchpadPath: '/sap/bc/ui2/flp', launchpadQuery: 'sap-client=600' }), '[]'));
-ok(parts.key === 'acd' && parts.customer === 'finteq', 'systemFromParts');
+ok(parts.key === 'acd600' && parts.customer === 'finteq', 'systemFromParts: the client joins the key');
 
 const imported = JSON.parse(core.json.importConfig(JSON.stringify(config), JSON.stringify({ format: 'slashn-config', systems: [{ key: 'x', host: 'x.example.com', isDefault: true }] }), JSON.stringify({ replace: false })));
 ok(imported.systems.length === 4, 'importConfig merge');

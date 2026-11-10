@@ -1,9 +1,9 @@
 // slashn — MV3 service worker.
 // Omnibox handling, alias resolution, navigation, seed loading, discovery bookkeeping, rescan orchestration.
 import { MSG, LOG_PREFIX } from './messages.js';
-import { createStorage, isDefaultHost, originPattern, looksLikeLaunchpad, sanitizeDiscoveredRecord } from './storage.js';
+import { createStorage, isDefaultHost, originPattern, looksLikeLaunchpad, sanitizeDiscoveredRecord, targetKey, systemByTarget, systemForUrl, isOnTarget } from './storage.js';
 import {
-  parseInput, mergeEntries, buildIndex, rank, buildUrl, homeUrl, appFinderUrl, isOnHost,
+  parseInput, mergeEntries, buildIndex, rank, buildUrl, homeUrl, appFinderUrl,
   formatSuggestion, formatSystemSuggestion, formatDefaultDescription, MATCH,
 } from './resolver.js';
 import { makeGuesser } from './tcodes.js';
@@ -42,8 +42,8 @@ chrome.tabs?.onUpdated?.addListener((tabId, changeInfo, tab) => {
 });
 chrome.omnibox.onInputStarted.addListener(() => {
   contextKey = null;
-  Promise.all([getCache(), activeTabHost()]).then(([cache, host]) => {
-    contextKey = systemByHost(cache.systems, host)?.key ?? null;
+  Promise.all([getCache(), activeTabUrl()]).then(([cache, url]) => {
+    contextKey = systemForUrl(cache.systems, url)?.key ?? null;
     // Show help before the first keystroke: launchpad target, or "no systems" guidance.
     const parsed = parseInput('', cache.systems, { lastUsedKey: cache.lastUsedKey, preferredKey: contextKey });
     setDefault(parsed.system ? `${formatDefaultDescription(parsed)} – type an alias, or "list" for systems` : formatDefaultDescription(parsed));
@@ -154,7 +154,7 @@ function getCache() {
 }
 
 function indexFor(cache, system) {
-  const host = system.host;
+  const host = targetKey(system); // host, or host/client: two clients of one host are indexed apart
   if (!cache.indexByHost.has(host)) {
     const entries = mergeEntries({
       user: cache.userAliases,
@@ -170,7 +170,7 @@ function indexFor(cache, system) {
 
 /** Intents launched lately on this system, most recent first (repeats kept: they count as frequency), for the ranking. */
 function recentIntentsFor(cache, system) {
-  return (cache.recent || []).filter((r) => r.host === system.host && r.intent && !/^Shell-/i.test(r.intent)).map((r) => r.intent);
+  return (cache.recent || []).filter((r) => r.host === targetKey(system) && r.intent && !/^Shell-/i.test(r.intent)).map((r) => r.intent);
 }
 
 /**
@@ -178,14 +178,18 @@ function recentIntentsFor(cache, system) {
  * exposes the intent but almost no transactions. After a scan, only when the tenant actually offers Shell-startGUI.
  */
 function guiFor(cache, system) {
-  const entries = cache.discovered?.[system.host]?.entries || [];
+  const entries = cache.discovered?.[targetKey(system)]?.entries || [];
   const available = entries.length ? entries.some((e) => /^shell-startgui$/i.test(String(e.intent || ''))) : null;
   return { enabled: (system.edition || 'onprem') !== 'public', available };
 }
 
-function systemByHost(systems, host) {
-  const h = String(host || '').toLowerCase();
-  return systems.find((s) => s.host === h) ?? null;
+/** `target` is a host (what content scripts send) or host/client (what the extension's own pages send). */
+function systemByHost(systems, target) {
+  return systemByTarget(systems, target);
+}
+/** The system of a tab: its host and, when systems on that host differ by client, the URL's sap-client. */
+function systemForTab(systems, url) {
+  return url ? systemForUrl(systems, url) : null;
 }
 
 /** Host (with port) of the active tab; undefined when the extension may not see that tab's URL. */
@@ -235,7 +239,7 @@ export function isSapTab(url, systems) {
   if (!url || !/^https?:/i.test(url)) return false;
   let host = '';
   try { host = new URL(url).host.toLowerCase(); } catch { return false; }
-  return Boolean(systemByHost(systems, host)) || looksLikeLaunchpad(url);
+  return Boolean(host) && (Boolean(systemForUrl(systems, url)) || looksLikeLaunchpad(url));
 }
 
 /** Enables or disables the toolbar button for one tab. Chrome clears per-tab state on navigation, so onUpdated re-applies it. */
@@ -270,10 +274,10 @@ async function refreshActionForAllTabs() {
   await Promise.all(tabs.map((t) => applyActionState(t).catch((e) => warn('action state failed', t.id, e))));
 }
 
-async function activeTabHost() {
+async function activeTabUrl() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    return tab?.url ? new URL(tab.url).host.toLowerCase() : null;
+    return tab?.url || null;
   } catch {
     return null;
   }
@@ -337,13 +341,13 @@ async function onInputEntered(text, disposition) {
  */
 async function rescanTab(system, contextTabId, windowId) {
   const pattern = originPattern(system);
-  const prefix = pattern.replace(/\*$/, '');
   if (contextTabId != null) {
     const t = await chrome.tabs.get(contextTabId).catch(() => null);
-    if (t?.url && t.url.toLowerCase().startsWith(prefix)) return t;
+    if (t?.url && isOnTarget(t.url, system)) return t;
   }
   let tabs = [];
   try { tabs = await chrome.tabs.query({ url: pattern }); } catch { return null; }
+  tabs = tabs.filter((t) => isOnTarget(t.url, system)); // the same host on another client is another system's tab
   if (windowId != null) tabs = tabs.filter((t) => t.windowId === windowId);
   tabs.sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
   return tabs[0] || null;
@@ -358,6 +362,7 @@ async function liveCheck(system, intents) {
   if (!list.length || !chrome.tabs?.sendMessage) return null;
   let tabs = [];
   try { tabs = await chrome.tabs.query({ url: originPattern(system) }); } catch { return null; }
+  tabs = tabs.filter((t) => isOnTarget(t.url, system));
   tabs.sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
   for (const tab of tabs.slice(0, 3)) {
     try {
@@ -380,7 +385,7 @@ async function noteMismatch(system, entry, live) {
   const l = live.available[entry.intent];
   if (l != null && l !== entry.onTarget) {
     log('live check differs from scan; rescan scheduled', system.key, entry.intent, { scan: entry.onTarget, live: l });
-    await storage.setPendingRescan(system.host, true).catch(() => {});
+    await storage.setPendingRescan(targetKey(system), true).catch(() => {});
   }
 }
 
@@ -400,7 +405,7 @@ async function launch(text, disposition, preferredKey = contextKey, { confirm = 
   }
   if (parsed.kind !== 'query') {
     await navigate(homeUrl(system), system, disposition, cache.settings);
-    await remember({ systemKey: system.key, host: system.host, intent: 'Shell-home', alias: null, title: 'Launchpad home', url: homeUrl(system), input: text });
+    await remember({ systemKey: system.key, host: targetKey(system), intent: 'Shell-home', alias: null, title: 'Launchpad home', url: homeUrl(system), input: text });
     return { action: 'home', url: homeUrl(system) };
   }
   const matches = rank(parsed, indexFor(cache, system), { limit: 1, guesser, gui: guiFor(cache, system), recentIntents: recentIntentsFor(cache, system) });
@@ -409,7 +414,7 @@ async function launch(text, disposition, preferredKey = contextKey, { confirm = 
     const url = appFinderUrl(system);
     await navigate(url, system, disposition, cache.settings, contextTabId);
     if (cache.settings.copyUnresolved) await copyToClipboard(parsed.query); // opt-in: it replaces whatever is on the clipboard
-    await remember({ systemKey: system.key, host: system.host, intent: 'Shell-appfinder', alias: null, title: `App Finder (unresolved "${parsed.query}")`, url, input: text, unresolved: parsed.query });
+    await remember({ systemKey: system.key, host: targetKey(system), intent: 'Shell-appfinder', alias: null, title: `App Finder (unresolved "${parsed.query}")`, url, input: text, unresolved: parsed.query });
     return { action: 'appfinder', url };
   }
   const url = buildUrl(system, top.entry, top.param);
@@ -425,13 +430,13 @@ async function launch(text, disposition, preferredKey = contextKey, { confirm = 
     if (availability === false) {
       return {
         action: 'blocked', basis, url, intent: top.entry.intent, title: top.entry.title, systemKey: system.key,
-        scannedAt: cache.scanMeta?.[system.host]?.lastScanned || null,
+        scannedAt: cache.scanMeta?.[targetKey(system)]?.lastScanned || null,
       };
     }
   }
   await navigate(url, system, disposition, cache.settings, contextTabId);
   await remember({
-    systemKey: system.key, host: system.host, intent: top.entry.intent, alias: top.entry.alias, title: top.entry.title,
+    systemKey: system.key, host: targetKey(system), intent: top.entry.intent, alias: top.entry.alias, title: top.entry.title,
     url, input: text, param: top.param, matchType: top.type, guess: top.type === MATCH.TCODE_GUESS || top.entry.confidence === 'low',
     unavailable: availability === false ? basis : null,
   });
@@ -448,13 +453,13 @@ async function resolveForPopup(text, contextHost = null, availableOnly = false, 
   const cache = await getCache();
   const preferredKey = systemByHost(cache.systems, contextHost)?.key ?? null;
   const parsed = parseInput(text, cache.systems, { lastUsedKey: cache.lastUsedKey, preferredKey });
-  const system = parsed.system ? { key: parsed.system.key, host: parsed.system.host, env: parsed.system.env, name: parsed.system.name } : null;
+  const system = parsed.system ? { key: parsed.system.key, host: parsed.system.host, target: targetKey(parsed.system), env: parsed.system.env, name: parsed.system.name } : null;
   if (parsed.kind === 'systems') {
     return { kind: 'systems', system, hint: 'Pick a system', matches: cache.systems.map((s) => ({ content: s.key, alias: s.key, title: s.name || s.host, intent: '', systemKey: s.key, tag: `${s.env} · ${s.host}` })) };
   }
   if (!system || parsed.kind !== 'query') return { kind: parsed.kind, system, hint: plainText(formatDefaultDescription(parsed)), matches: [] };
   // "available only" needs a scan to judge against; before one, every row is unverified and the filter is ignored
-  const scannedAt = cache.scanMeta?.[parsed.system.host]?.lastScanned || null;
+  const scannedAt = cache.scanMeta?.[targetKey(parsed.system)]?.lastScanned || null;
   const filtered = Boolean(availableOnly && scannedAt);
   const sources = SOURCE_FILTERS[source] || null;
   const matches = rank(parsed, indexFor(cache, parsed.system), { limit: 8, guesser, gui: guiFor(cache, parsed.system), availableOnly: filtered, sources, recentIntents: recentIntentsFor(cache, parsed.system) });
@@ -518,7 +523,7 @@ async function navigate(url, system, disposition, settings, contextTabId = null)
     await chrome.tabs.create({ url, active: disposition === 'newForegroundTab', ...where });
     return;
   }
-  if (tab && settings.reuseTabOnSameHost !== false && isOnHost(tab.url, system)) {
+  if (tab && settings.reuseTabOnSameHost !== false && isOnTarget(tab.url, system)) {
     await chrome.tabs.update(tab.id, { url });
     if (contextTabId != null) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
     return;
@@ -658,13 +663,13 @@ async function handleMessage(msg, sender) {
     case MSG.PAGE_READY: {
       if (!sender.tab) return { scan: false, reason: 'no tab' };
       const cache = await getCache();
-      const system = systemByHost(cache.systems, msg.host);
+      const system = systemForTab(cache.systems, sender.tab.url) ?? systemByHost(cache.systems, msg.host);
       if (!system) return { scan: false, reason: 'unregistered host' };
-      const pending = await storage.getPendingRescan(system.host);
-      const meta = cache.scanMeta?.[system.host];
+      const pending = await storage.getPendingRescan(targetKey(system));
+      const meta = cache.scanMeta?.[targetKey(system)];
       const ageDays = meta?.lastScanned ? (Date.now() - Date.parse(meta.lastScanned)) / 86400000 : Infinity;
       const scan = pending || !meta || ageDays > cache.settings.autoScanDays;
-      if (pending) await storage.setPendingRescan(system.host, false);
+      if (pending) await storage.setPendingRescan(targetKey(system), false);
       const reason = pending ? 'requested' : !meta ? 'never scanned' : ageDays > cache.settings.autoScanDays ? 'stale' : 'fresh';
       log('page ready', system.key, { scan, reason });
       return { scan, reason };
@@ -675,15 +680,15 @@ async function handleMessage(msg, sender) {
       const fromHost = (() => { try { return sender.tab.url ? new URL(sender.tab.url).host.toLowerCase() : null; } catch { return null; } })();
       if (fromHost && fromHost !== String(msg.host || '').toLowerCase()) return { stored: 0, error: 'host mismatch' };
       const cache = await getCache();
-      const system = systemByHost(cache.systems, msg.host);
+      const system = systemForTab(cache.systems, sender.tab.url) ?? systemByHost(cache.systems, msg.host);
       if (!system) return { stored: 0, error: 'unregistered host' };
       const record = sanitizeDiscoveredRecord({ scannedAt: new Date().toISOString(), ui5Version: msg.ui5Version, system: msg.system, methods: msg.methods, errors: msg.errors, entries: msg.entries });
       const { entries } = record;
-      await storage.setDiscovered(system.host, record);
+      await storage.setDiscovered(targetKey(system), record);
       cachePromise = null;
       log('discovery stored', system.key, entries.length);
       const reopen = await storage.getReopenLauncher();
-      if (reopen?.host === system.host && Date.now() - reopen.ts < 5 * 60000 && sender?.tab?.id != null) {
+      if (reopen?.host === targetKey(system) && Date.now() - reopen.ts < 5 * 60000 && sender?.tab?.id != null) {
         await storage.setReopenLauncher(null);
         openLauncher(sender.tab, `Scanned ${system.key}: ${entries.length} apps`).catch((e) => warn('launcher failed', e));
       }
@@ -694,7 +699,7 @@ async function handleMessage(msg, sender) {
       const system = systemByHost(cache.systems, msg.host);
       if (!system) return { status: 'error', error: 'unregistered host' };
       // from the launcher: the reload takes the overlay with it, so bring it back once the scan has landed
-      await storage.setReopenLauncher(msg.reopenLauncher ? system.host : null);
+      await storage.setReopenLauncher(msg.reopenLauncher ? targetKey(system) : null);
       const windowId = sender?.tab?.windowId ?? (await chrome.windows.getLastFocused().catch(() => null))?.id ?? null;
       const tab = await rescanTab(system, Number.isInteger(msg.contextTabId) ? msg.contextTabId : null, windowId);
       if (tab) {
@@ -703,12 +708,12 @@ async function handleMessage(msg, sender) {
           return { status: 'messaged' };
         } catch {
           // no content script in that tab (it predates the grant): a fresh tab scans; reloading could discard unsaved work
-          await storage.setPendingRescan(system.host, true);
+          await storage.setPendingRescan(targetKey(system), true);
           await chrome.tabs.create({ url: homeUrl(system), active: true, ...(tab.windowId != null ? { windowId: tab.windowId } : {}) });
           return { status: 'opened' };
         }
       }
-      await storage.setPendingRescan(system.host, true);
+      await storage.setPendingRescan(targetKey(system), true);
       await chrome.tabs.create({ url: homeUrl(system), active: true, ...(windowId != null ? { windowId } : {}) });
       return { status: 'opened' };
     }
@@ -744,7 +749,7 @@ async function handleMessage(msg, sender) {
       // https always; plain http only to a registered http system (internal on-prem hosts), never javascript:/data:/file:
       let u = null;
       try { u = new URL(String(msg.url)); } catch { u = null; }
-      const okScheme = u && (u.protocol === 'https:' || (u.protocol === 'http:' && systemByHost(cache.systems, u.host)?.scheme === 'http'));
+      const okScheme = u && (u.protocol === 'https:' || (u.protocol === 'http:' && systemForUrl(cache.systems, u.href)?.scheme === 'http'));
       if (!okScheme) return { error: 'bad url' };
       await navigate(u.href, system, msg.disposition || 'currentTab', cache.settings, Number.isInteger(msg.contextTabId) ? msg.contextTabId : null);
       return { action: 'open', url: u.href };
@@ -755,7 +760,7 @@ async function handleMessage(msg, sender) {
       const cache = await getCache();
       const system = systemByHost(cache.systems, msg.host);
       if (!system) return { error: 'unregistered host' };
-      return openDialog('src/sysinfo/sysinfo.html', system.host, SYSTEM_INFO_WINDOW);
+      return openDialog('src/sysinfo/sysinfo.html', targetKey(system), SYSTEM_INFO_WINDOW);
     }
     case MSG.OPEN_DEBUG:
       return openDialog('src/debug/debug.html', msg.host ? String(msg.host) : '', DEBUG_WINDOW);
@@ -800,6 +805,7 @@ async function openDialog(page, host, size) {
 async function debugCall(system, call, params) {
   let tabs = [];
   try { tabs = await chrome.tabs.query({ url: originPattern(system) }); } catch { tabs = []; }
+  tabs = tabs.filter((t) => isOnTarget(t.url, system));
   if (!tabs.length) return { launchpad: false, reason: 'no tab' };
   tabs.sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
   let lastError = 'cannot script the tab';
@@ -822,13 +828,14 @@ async function debugCall(system, call, params) {
 async function probeSystem(system) {
   let tabs = [];
   try { tabs = await chrome.tabs.query({ url: originPattern(system) }); } catch { tabs = []; }
+  tabs = tabs.filter((t) => isOnTarget(t.url, system));
   if (!tabs.length) return { launchpad: false, reason: 'no tab' };
   tabs.sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
   let reason = 'no shell';
   for (const tab of tabs.slice(0, 3)) {
     const r = await probeTab(tab.id);
     if (!r.launchpad) continue;
-    await storage.setScanSystemInfo(system.host, r.system, r.ui5Version);
+    await storage.setScanSystemInfo(targetKey(system), r.system, r.ui5Version);
     cachePromise = null;
     log('probed', system.key, r);
     return { launchpad: true, system: r.system, ui5Version: r.ui5Version, tabId: tab.id };

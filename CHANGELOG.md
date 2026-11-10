@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.0 – one host, several clients (unreleased)
+
+- Two clients of the same system are two systems: pasting a launchpad URL with `sap-client=400` creates `acd400`, and `sap-client=600` creates `acd600`, each with its own scan. The tab you are on is recognised by host and client, so suggestions, tab reuse and scans go to the right client. Scan results of systems with a client move to a `host/client` key once (storage schema 2).
+
 ## 1.1.2 – embedding API (unreleased)
 
 - System keys may contain `/` and `.` (for example `acd/400`).

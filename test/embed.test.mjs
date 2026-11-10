@@ -135,7 +135,8 @@ test('setConfig validates: a classic-only system needs a GUI connection, the cli
 
 test('normalizeSystem / systemFromParts for hosts that split the URL themselves', () => {
   const s = core.systemFromParts({ scheme: 'HTTPS', host: 'Acd.Finteq.io:8443', launchpadPath: '/sap/bc/ui2/flp/', launchpadQuery: '?sap-client=600' }, config().systems);
-  assert.equal(s.key, 'acd2', 'made unique against the existing keys');
+  assert.equal(s.key, 'acd600', 'the client becomes part of the key: two clients of one host are two systems');
+  assert.equal(s.name, 'acd.finteq.io:8443 (client 600)');
   assert.equal(s.host, 'acd.finteq.io:8443');
   assert.equal(s.launchpadPath, '/sap/bc/ui2/flp');
   assert.equal(s.launchpadQuery, 'sap-client=600');
@@ -162,7 +163,7 @@ test('importConfig: replace and merge like the extension, scan data per host', (
   assert.deepEqual(merged.userAliases.map((a) => a.alias), ['po', 'x']);
   assert.equal(merged.userAliases[0].intent, 'PurchaseOrder-create');
   assert.deepEqual(merged.hiddenAliases, ['f0842']);
-  assert.deepEqual(Object.keys(merged.discovered).sort(), ['erp.example.com', 'new.example.com']);
+  assert.deepEqual(Object.keys(merged.discovered).sort(), ['erp.example.com/100', 'new.example.com'], 'erp has sap-client=100: its scan moved to host/client');
   assert.equal(merged.recent.length, 1, 'merge keeps the launch history');
   assert.equal(merged.lastUsedSystemKey, 'new');
 

@@ -4,7 +4,7 @@ import { aliasesFromCsv, tcodesFromCsv } from './csv.js';
 import { applyTcodeTable, applyAppMap } from './tcodes.js';
 import { normalizeEntry, DEFAULT_LAUNCHPAD_PATH, EDITIONS } from './resolver.js';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2; // 2: scans of client-bearing systems are keyed by host/client
 export const SYNC_ITEM_BUDGET = 7000; // bytes; chrome.storage.sync QUOTA_BYTES_PER_ITEM is 8192 (key + value)
 export const RECENT_LIMIT = 20;
 
@@ -114,7 +114,7 @@ export function sanitizeScanMeta(meta) {
 const sanitizeHostMap = (map, each) => {
   const out = {};
   if (!map || typeof map !== 'object') return out;
-  for (const [host, v] of Object.entries(map)) if (HOST_RE.test(host) && v && typeof v === 'object') out[host] = each(v);
+  for (const [host, v] of Object.entries(map)) if (TARGET_RE.test(host) && v && typeof v === 'object') out[host] = each(v);
   return out;
 };
 export const ENVS = Object.freeze(['DEV', 'TST', 'PRD']);
@@ -188,6 +188,43 @@ export function editionFromSystemInfo(info) {
 }
 export const HOST_RE = /^[a-z0-9.-]+(:\d{1,5})?$/;
 export const KEY_RE = /^[a-z0-9][a-z0-9_\/.-]*$/i; // "acd", "acd/400", "s4.dev"; the key keeps the case it was typed in; matching is case-insensitive
+/** A system's target: its host, plus "/client" when the launchpad query names a sap-client. Keys of discovered and scanMeta. */
+export const TARGET_RE = /^[a-z0-9.-]+(:\d{1,5})?(\/\d{3})?$/;
+export const clientOf = (system) => { const m = /(?:^|&)sap-client=(\d{3})(?:&|$)/i.exec(String(system?.launchpadQuery ?? '')); return m ? m[1] : null; };
+export const targetKey = (system) => { const h = String(system?.host ?? '').toLowerCase(); if (!h) return ''; const c = clientOf(system); return c ? `${h}/${c}` : h; };
+const clientInUrl = (u) => { const v = u.searchParams.get('sap-client'); return v && /^\d{3}$/.test(v) ? v : null; };
+/**
+ * The system a target names: "host/400" exactly, or a bare "host" (what content scripts send) – then the system on that
+ * host without a client, else the first one on it.
+ */
+export function systemByTarget(systems, target) {
+  const t = String(target ?? '').toLowerCase();
+  if (!t) return null;
+  const list = systems || [];
+  if (t.includes('/')) return list.find((s) => targetKey(s) === t) ?? null;
+  const onHost = list.filter((s) => String(s.host).toLowerCase() === t);
+  return onHost.find((s) => !clientOf(s)) ?? onHost[0] ?? null;
+}
+/** The system a tab URL belongs to: same host, and the sap-client of the URL when systems on the host differ by client. */
+export function systemForUrl(systems, url) {
+  let u;
+  try { u = new URL(String(url ?? '')); } catch { return null; }
+  const host = u.host.toLowerCase();
+  const onHost = (systems || []).filter((s) => String(s.host).toLowerCase() === host);
+  if (!onHost.length) return null;
+  const client = clientInUrl(u);
+  if (client) return onHost.find((s) => clientOf(s) === client) ?? onHost.find((s) => !clientOf(s)) ?? onHost[0];
+  return onHost.find((s) => !clientOf(s)) ?? onHost[0];
+}
+/** Is this URL on the system's host, and on its client when it has one? (hash navigation keeps the tab) */
+export function isOnTarget(url, system) {
+  if (!url || !system?.host) return false;
+  let u;
+  try { u = new URL(String(url)); } catch { return false; }
+  if (u.host.toLowerCase() !== String(system.host).toLowerCase()) return false;
+  const c = clientOf(system);
+  return !c || clientInUrl(u) === c;
+}
 export const ALIAS_RE = /^[a-z0-9][a-z0-9_./-]*$/;
 export const DEFAULT_HOST_SUFFIX = '.s4hana.cloud.sap';
 /** Hosts covered by the static manifest permissions; anything else needs a runtime grant + dynamic content scripts. */
@@ -253,10 +290,12 @@ export function systemFromParts(parts, existing = []) {
   const labels = host.replace(/:\d+$/, '').split('.');
   const base = (labels[0] || 'sys').toLowerCase().replace(/[^a-z0-9_-]/g, '').replace(/^[^a-z0-9]+/, '') || 'sys';
   const keys = new Set((existing || []).map((s) => String(s.key).toLowerCase()));
-  let key = base;
-  for (let n = 2; keys.has(key); n++) key = `${base}${n}`;
+  const client = clientOf({ launchpadQuery }); // two clients of one host are two systems: acd400, acd600
+  const stem = client ? `${base}${client}` : base;
+  let key = stem;
+  for (let n = 2; keys.has(key); n++) key = `${stem}${n}`;
   const customer = isDefaultHost(host) ? '' : (labels.length >= 3 ? labels[labels.length - 2] : '');
-  return normalizeSystem({ key, name: host, customer, host, scheme, launchpadPath, launchpadQuery, env: guessEnv(host), isDefault: !(existing || []).some((s) => s.isDefault) });
+  return normalizeSystem({ key, name: client ? `${host} (client ${client})` : host, customer, host, scheme, launchpadPath, launchpadQuery, env: guessEnv(host), isDefault: !(existing || []).some((s) => s.isDefault) });
 }
 
 // ---------------------------------------------------------------- pure helpers
@@ -402,6 +441,17 @@ export function migrateSnapshot(snapshot) {
   local[KEYS.DISCOVERED] = sanitizeHostMap(local[KEYS.DISCOVERED], sanitizeDiscoveredRecord);
   local[KEYS.SCAN_META] = sanitizeHostMap(local[KEYS.SCAN_META], sanitizeScanMeta);
   local[KEYS.RECENT] = Array.isArray(local[KEYS.RECENT]) ? local[KEYS.RECENT].slice(0, RECENT_LIMIT) : [];
+  // v1 → v2: a scan of a system with a client was stored under the bare host; it now lives under host/client
+  const systemsNow = Array.isArray(sync[KEYS.SYSTEMS]) ? sync[KEYS.SYSTEMS] : [];
+  for (const map of [local[KEYS.DISCOVERED], local[KEYS.SCAN_META]]) {
+    for (const s of systemsNow) {
+      const target = targetKey(s);
+      if (!s.host || target === s.host || map[target] || !map[s.host]) continue;
+      if (systemsNow.some((o) => o !== s && o.host === s.host && !clientOf(o))) continue; // a client-less system on the host keeps it
+      map[target] = map[s.host];
+      delete map[s.host];
+    }
+  }
   local[KEYS.SCHEMA] = SCHEMA_VERSION;
   return { sync, local };
 }

@@ -405,9 +405,9 @@ test('on-prem: launches compose scheme, port, launchpad path, query and intent',
   c = await entered('erp me21n', 'newForegroundTab');
   assert.deepEqual(c[0], ['create', { url: 'http://erp.internal.example:8000/sap/bc/ui2/flp?sap-client=100#PurchaseOrder-create', active: true }]);
   const recent = (await local.get('recent')).recent;
-  assert.equal(recent[0].host, 'erp.internal.example:8000', 'recent launches are keyed by host:port so the popup can filter by the current tab');
+  assert.equal(recent[0].host, 'erp.internal.example:8000/100', 'recent launches are keyed by target (host:port, plus the client) so the popup can filter by the current tab');
   assert.equal(recent[0].url, 'http://erp.internal.example:8000/sap/bc/ui2/flp?sap-client=100#PurchaseOrder-create');
-  assert.equal(recent[1].host, 'acd.finteq.io:8443');
+  assert.equal(recent[1].host, 'acd.finteq.io:8443/600');
   assert.equal((await local.get('lastUsedSystemKey')).lastUsedSystemKey, 'erp');
 });
 
@@ -449,9 +449,10 @@ test('on-prem: the launchpad handshake uses the host the content script sends (h
   assert.deepEqual(await send({ type: MSG.DISCOVERY_RESULT, host: 'acd.finteq.io:8443', entries: [] }, { id: 'ext' }), { stored: 0, error: 'not from a tab' }, 'only content scripts report scans');
   assert.deepEqual(await send({ type: MSG.DISCOVERY_RESULT, host: 'acd.finteq.io:8443', entries: [] }, { id: 'ext', tab: { id: 7, url: 'https://evil.example/ui' } }), { stored: 0, error: 'host mismatch' }, 'and only for the host their tab is on');
   const meta = (await local.get('scanMeta')).scanMeta;
-  assert.equal(meta['acd.finteq.io:8443'].appCount, 3);
-  assert.equal(meta['acd.finteq.io:8443'].detectedEdition, 'onprem');
-  assert.deepEqual(meta['acd.finteq.io:8443'].system, { productVersion: 'SAP S/4HANA 2025', productVersions: 'SAP SCREEN PERSONAS 3.0 · SAP S/4HANA 2025 · ABAP PLATFORM 2025 · SAP FIORI FOR SAP S/4HANA 2025', systemRole: '1', clientRole: 'D', appVersion: '2025.0.23' });
+  assert.equal(meta['acd.finteq.io:8443/600'].appCount, 3, 'a system with a client keeps its scan under host/client');
+  assert.equal(meta['acd.finteq.io:8443/600'].detectedEdition, 'onprem');
+  assert.equal(meta['acd.finteq.io:8443'], undefined);
+  assert.deepEqual(meta['acd.finteq.io:8443/600'].system, { productVersion: 'SAP S/4HANA 2025', productVersions: 'SAP SCREEN PERSONAS 3.0 · SAP S/4HANA 2025 · ABAP PLATFORM 2025 · SAP FIORI FOR SAP S/4HANA 2025', systemRole: '1', clientRole: 'D', appVersion: '2025.0.23' });
   assert.equal(meta['acd.finteq.io'], undefined);
   assert.deepEqual(await send({ type: MSG.PAGE_READY, host: 'acd.finteq.io:8443' }), { scan: false, reason: 'fresh' });
   // discovered apps are suggested for fin only, with the on-prem URL
@@ -520,7 +521,7 @@ test('on-prem: live check and rescan find launchpad tabs by scheme, host and por
   calls.length = 0;
   assert.equal((await send({ type: MSG.RESCAN_HOST, host: 'erp.internal.example:8000' }, { id: 'ext' })).status, 'opened');
   assert.deepEqual(calls[0], ['create', { url: 'http://erp.internal.example:8000/sap/bc/ui2/flp?sap-client=100#Shell-home', active: true, windowId: 1 }]);
-  assert.equal((await session.get('pendingRescan')).pendingRescan['erp.internal.example:8000'], true);
+  assert.equal((await session.get('pendingRescan')).pendingRescan['erp.internal.example:8000/100'], true, 'pending rescans are keyed by target');
 });
 
 test('on-prem: popup messages resolve and open http URLs only for registered http systems', async () => {
@@ -863,4 +864,40 @@ test('ranking: a launch makes its app come first among equal-tier matches next t
 test('popup rows name their source, so an untitled row can show it instead of repeating the intent', async () => {
   const r = await send({ type: MSG.RESOLVE, text: 'acd po' }, { id: 'ext' });
   assert.ok(r.matches.every((m) => ['user', 'import', 'discovered', 'seed', 'library', 'gui'].includes(m.source)), JSON.stringify(r.matches.map((m) => m.source)));
+});
+
+test('two clients of one host are two systems: the tab URL picks the client, scans are kept apart', async () => {
+  const cur = (await sync.get('systems')).systems;
+  const A4 = { key: 'acd400', name: 'ACD 400', customer: 'a', host: 'acd.example.com', launchpadPath: '/sap/bc/ui2/flp', launchpadQuery: 'sap-client=400', env: 'DEV', edition: 'onprem', isDefault: false };
+  const A6 = { ...A4, key: 'acd600', name: 'ACD 600', launchpadQuery: 'sap-client=600' };
+  await sync.set({ systems: [...cur, A4, A6] });
+  L.storageChanged({ systems: {} }, 'sync');
+  await tick();
+  const tab600 = { id: 9, url: 'https://acd.example.com/sap/bc/ui2/flp?sap-client=600#Shell-home' };
+  assert.deepEqual(await send({ type: MSG.PAGE_READY, host: 'acd.example.com' }, { id: 'ext', tab: tab600 }), { scan: true, reason: 'never scanned' });
+  assert.deepEqual(await send({ type: MSG.DISCOVERY_RESULT, host: 'acd.example.com', entries: [{ intent: 'ZSix-display', title: 'Six hundred only' }] }, { id: 'ext', tab: tab600 }), { stored: 1 });
+  const disc = (await local.get('discovered')).discovered;
+  assert.ok(disc['acd.example.com/600'], 'stored under the client the tab is on');
+  assert.equal(disc['acd.example.com/400'], undefined);
+  assert.equal(disc['acd.example.com'], undefined);
+  assert.match((await changed('acd600 six hun'))[0]?.content || '', /^acd600 zsix-display$/i, 'discovered on 600');
+  assert.ok(!(await changed('acd400 six hun')).some((x) => /zsix/i.test(x.content)), 'not on 400');
+  activeTab.url = tab600.url;
+  L.onInputStarted();
+  await tick();
+  assert.equal((await changed('me21n'))[0].content, 'acd600 me21n', 'the tab on client 600 makes acd600 the default');
+  L.onInputCancelled();
+  activeTab.url = 'https://acd.example.com/sap/bc/ui2/flp?sap-client=400#Shell-home';
+  L.onInputStarted();
+  await tick();
+  assert.equal((await changed('me21n'))[0].content, 'acd400 me21n', 'the tab on client 400 makes acd400 the default');
+  const c = await entered('me23n 1', 'currentTab');
+  assert.deepEqual(c[0], ['update', 1, { url: 'https://acd.example.com/sap/bc/ui2/flp?sap-client=400#PurchaseOrder-displayFactSheet?PurchaseOrder=1' }], 'the client-400 tab is reused by the client-400 system');
+  const other = await entered('acd600 me23n 1', 'currentTab');
+  assert.equal(other[0][0], 'create', 'the client-600 system never reuses a client-400 tab');
+  L.onInputCancelled();
+  activeTab.url = 'https://my1.s4hana.cloud.sap/ui#Shell-home';
+  await sync.set({ systems: cur });
+  L.storageChanged({ systems: {} }, 'sync');
+  await tick();
 });
